@@ -1,0 +1,5 @@
+# Copy this file to .envrc and fill in your API keys
+# Then run: direnv allow
+
+export OPENAI_API_KEY="sk-..."
+export WEAVIATE_URL="http://localhost:8080"
