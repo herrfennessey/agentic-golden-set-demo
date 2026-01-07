@@ -88,7 +88,7 @@ class WANDSLoader:
         if self._products_by_id is None:
             df = self._load_products_df()
             self._products_by_id = {}
-            for _, row in df.iterrows():
+            for row in df.to_dict("records"):
                 product = Product(
                     product_id=str(row["product_id"]),
                     product_name=str(row["product_name"]),
@@ -108,7 +108,7 @@ class WANDSLoader:
         if self._queries_by_id is None:
             df = self._load_queries_df()
             self._queries_by_id = {}
-            for _, row in df.iterrows():
+            for row in df.to_dict("records"):
                 query = Query(
                     query_id=str(row["query_id"]),
                     query=str(row["query"]),
@@ -122,7 +122,7 @@ class WANDSLoader:
         if self._labels_by_query is None:
             df = self._load_labels_df()
             self._labels_by_query = {}
-            for _, row in df.iterrows():
+            for row in df.to_dict("records"):
                 label = WANDSLabel(
                     id=str(row["id"]),
                     query_id=str(row["query_id"]),

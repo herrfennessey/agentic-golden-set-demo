@@ -35,8 +35,8 @@ cd agentic-golden-set-demo
 make install
 
 # Copy environment file and add your OpenAI API key
-cp .envrc-example .envrc
-# Edit .envrc with your OPENAI_API_KEY
+cp .env.example .env
+# Edit .env with your OPENAI_API_KEY
 
 # Download WANDS dataset
 make download-wands
