@@ -1,7 +1,6 @@
 """Tests for WANDS data loader."""
 
 from pathlib import Path
-from textwrap import dedent
 
 import pytest
 
@@ -15,33 +14,39 @@ def sample_data_dir(tmp_path: Path) -> Path:
     data_dir = tmp_path / "wands"
     data_dir.mkdir()
 
-    # Create sample product.csv
-    products_csv = dedent("""
-        product_id,product_name,product_class,category hierarchy,product_description,product_features,rating_count,average_rating,review_count
-        1,Blue Velvet Sofa,Sofas,Furniture / Living Room / Sofas,A beautiful blue velvet sofa,Color:Blue|Material:Velvet,100,4.5,50
-        2,Leather Sectional,Sectionals,Furniture / Living Room / Sectionals,Modern leather sectional,Color:Brown|Material:Leather,200,4.2,80
-        3,Wooden Coffee Table,Coffee Tables,Furniture / Living Room / Coffee Tables,Oak wood coffee table,Material:Wood|Style:Modern,150,4.8,75
-    """).strip()
-    (data_dir / "product.csv").write_text(products_csv)
+    # Create sample product.csv (WANDS uses tab-separated format)
+    products_tsv = "\n".join(
+        [
+            "product_id\tproduct_name\tproduct_class\tcategory hierarchy\tproduct_description\tproduct_features\trating_count\taverage_rating\treview_count",
+            "1\tBlue Velvet Sofa\tSofas\tFurniture / Living Room / Sofas\tA beautiful blue velvet sofa\tColor:Blue|Material:Velvet\t100\t4.5\t50",
+            "2\tLeather Sectional\tSectionals\tFurniture / Living Room / Sectionals\tModern leather sectional\tColor:Brown|Material:Leather\t200\t4.2\t80",
+            "3\tWooden Coffee Table\tCoffee Tables\tFurniture / Living Room / Coffee Tables\tOak wood coffee table\tMaterial:Wood|Style:Modern\t150\t4.8\t75",
+        ]
+    )
+    (data_dir / "product.csv").write_text(products_tsv)
 
-    # Create sample query.csv
-    queries_csv = dedent("""
-        query_id,query,query_class
-        Q1,blue sofa,Sofas
-        Q2,coffee table,Coffee Tables
-    """).strip()
-    (data_dir / "query.csv").write_text(queries_csv)
+    # Create sample query.csv (WANDS uses tab-separated format)
+    queries_tsv = "\n".join(
+        [
+            "query_id\tquery\tquery_class",
+            "Q1\tblue sofa\tSofas",
+            "Q2\tcoffee table\tCoffee Tables",
+        ]
+    )
+    (data_dir / "query.csv").write_text(queries_tsv)
 
-    # Create sample label.csv
-    labels_csv = dedent("""
-        id,query_id,product_id,label
-        1,Q1,1,Exact
-        2,Q1,2,Partial
-        3,Q1,3,Irrelevant
-        4,Q2,3,Exact
-        5,Q2,1,Irrelevant
-    """).strip()
-    (data_dir / "label.csv").write_text(labels_csv)
+    # Create sample label.csv (WANDS uses tab-separated format)
+    labels_tsv = "\n".join(
+        [
+            "id\tquery_id\tproduct_id\tlabel",
+            "1\tQ1\t1\tExact",
+            "2\tQ1\t2\tPartial",
+            "3\tQ1\t3\tIrrelevant",
+            "4\tQ2\t3\tExact",
+            "5\tQ2\t1\tIrrelevant",
+        ]
+    )
+    (data_dir / "label.csv").write_text(labels_tsv)
 
     return data_dir
 

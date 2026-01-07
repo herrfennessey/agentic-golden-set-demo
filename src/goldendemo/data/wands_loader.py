@@ -57,7 +57,7 @@ class WANDSLoader:
             if not path.exists():
                 raise FileNotFoundError(f"Product file not found: {path}. Run 'make download-wands' first.")
             logger.info(f"Loading products from {path}")
-            self._products_df = pd.read_csv(path, dtype=str).fillna("")
+            self._products_df = pd.read_csv(path, sep="\t", dtype=str).fillna("")
             logger.info(f"Loaded {len(self._products_df)} products")
         return self._products_df
 
@@ -68,7 +68,7 @@ class WANDSLoader:
             if not path.exists():
                 raise FileNotFoundError(f"Query file not found: {path}. Run 'make download-wands' first.")
             logger.info(f"Loading queries from {path}")
-            self._queries_df = pd.read_csv(path, dtype=str).fillna("")
+            self._queries_df = pd.read_csv(path, sep="\t", dtype=str).fillna("")
             logger.info(f"Loaded {len(self._queries_df)} queries")
         return self._queries_df
 
@@ -79,7 +79,7 @@ class WANDSLoader:
             if not path.exists():
                 raise FileNotFoundError(f"Label file not found: {path}. Run 'make download-wands' first.")
             logger.info(f"Loading labels from {path}")
-            self._labels_df = pd.read_csv(path, dtype=str).fillna("")
+            self._labels_df = pd.read_csv(path, sep="\t", dtype=str).fillna("")
             logger.info(f"Loaded {len(self._labels_df)} labels")
         return self._labels_df
 
@@ -96,9 +96,9 @@ class WANDSLoader:
                     category_hierarchy=str(row["category hierarchy"]),
                     product_description=str(row.get("product_description", "")),
                     product_features=str(row.get("product_features", "")),
-                    rating_count=int(row.get("rating_count", 0) or 0),
+                    rating_count=int(float(row.get("rating_count", 0) or 0)),
                     average_rating=float(row.get("average_rating", 0) or 0),
-                    review_count=int(row.get("review_count", 0) or 0),
+                    review_count=int(float(row.get("review_count", 0) or 0)),
                 )
                 self._products_by_id[product.product_id] = product
         return self._products_by_id
