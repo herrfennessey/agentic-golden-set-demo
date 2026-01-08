@@ -45,6 +45,9 @@ ignore = ["E501"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests (require external services)",
+]
 
 [tool.mypy]
 python_version = "3.11"

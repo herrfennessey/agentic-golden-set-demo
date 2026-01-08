@@ -45,6 +45,28 @@ make download-wands
 make setup
 ```
 
+### Loading Data into Weaviate
+
+After downloading the WANDS dataset, load it into Weaviate:
+
+```bash
+# Start Weaviate
+make weaviate-up
+
+# Load products (creates embeddings via OpenAI API)
+poetry run python scripts/load_weaviate.py
+```
+
+**Cost Note**: Embedding all 42,994 products using OpenAI's `text-embedding-3-small` costs approximately **$0.50 USD**. The script supports incremental loading - if interrupted, simply re-run and it will resume from where it left off.
+
+```bash
+# Check loading progress / resume interrupted load
+poetry run python scripts/load_weaviate.py
+
+# Full reset and reload
+poetry run python scripts/load_weaviate.py --reset
+```
+
 ### Running the Demo
 
 ```bash
