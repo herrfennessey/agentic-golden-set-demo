@@ -7,6 +7,7 @@ Provides hybrid search (vector + BM25 keyword) over the WANDS product catalog.
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import weaviate
 from weaviate.classes.config import Configure, DataType, Property, Tokenization
@@ -121,11 +122,9 @@ class WeaviateClient:
     def connect(self) -> Iterator["WeaviateClient"]:
         """Context manager for connecting to Weaviate."""
         try:
-            # Parse host from URL
-            host = self.url.replace("http://", "").replace("https://", "").split(":")[0]
-            port = 8080
-            if ":" in self.url.split("//")[-1]:
-                port = int(self.url.split(":")[-1])
+            parsed = urlparse(self.url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 8080
 
             self._client = weaviate.connect_to_local(
                 host=host,
@@ -155,6 +154,7 @@ class WeaviateClient:
         try:
             return bool(self.client.is_ready())
         except Exception:
+            logger.debug("Weaviate readiness check failed", exc_info=True)
             return False
 
     def collection_exists(self) -> bool:
@@ -199,9 +199,12 @@ class WeaviateClient:
         return product_ids
 
     def delete_products(self, product_ids: list[str]) -> int:
-        """Delete products by their IDs."""
-        from weaviate.classes.query import Filter
+        """
+        Delete products by their IDs.
 
+        Note: Returns the number of delete operations attempted, not the actual
+        number of objects deleted (Weaviate's delete_many doesn't return counts).
+        """
         deleted = 0
         for pid in product_ids:
             self.collection.data.delete_many(where=Filter.by_property("product_id").equal(pid))
@@ -305,25 +308,33 @@ class WeaviateClient:
             for obj in results.objects
         ]
 
-    def get_by_ids(self, product_ids: list[str]) -> list[Product]:
+    def get_by_ids(self, product_ids: list[str], limit: int = 50) -> list[Product]:
         """
         Get full product details for specific IDs.
 
         Args:
             product_ids: List of product IDs to retrieve.
+            limit: Maximum number of IDs to process (default 50).
 
         Returns:
-            List of Product objects.
+            List of Product objects (order not guaranteed to match input).
         """
-        products = []
-        for pid in product_ids[:50]:  # Limit to 50
-            results = self.collection.query.fetch_objects(
-                filters=Filter.by_property("product_id").equal(pid),
-                limit=1,
-            )
-            if results.objects:
-                products.append(Product.model_validate(results.objects[0].properties))
-        return products
+        if not product_ids:
+            return []
+
+        limited_ids = product_ids[:limit]
+
+        # Build OR filter for batch fetch instead of N individual queries
+        combined_filter = Filter.by_property("product_id").equal(limited_ids[0])
+        for pid in limited_ids[1:]:
+            combined_filter = combined_filter | Filter.by_property("product_id").equal(pid)
+
+        results = self.collection.query.fetch_objects(
+            filters=combined_filter,
+            limit=len(limited_ids),
+        )
+
+        return [Product.model_validate(obj.properties) for obj in results.objects]
 
     def get_all_classes(self) -> list[CategoryInfo]:
         """
@@ -332,7 +343,14 @@ class WeaviateClient:
         Returns:
             List of CategoryInfo objects sorted by category hierarchy.
         """
-        # Use aggregation to get unique classes
+        # Build class-to-hierarchy map in a single pass to avoid N+1 queries
+        class_to_hierarchy: dict[str, str] = {}
+        for obj in self.collection.iterator(return_properties=["product_class", "category_hierarchy"]):
+            product_class = str(obj.properties.get("product_class", ""))
+            if product_class and product_class not in class_to_hierarchy:
+                class_to_hierarchy[product_class] = str(obj.properties.get("category_hierarchy", ""))
+
+        # Use aggregation to get counts per class
         results = self.collection.aggregate.over_all(
             group_by="product_class",
             total_count=True,
@@ -342,15 +360,7 @@ class WeaviateClient:
         for group in results.groups:
             product_class = str(group.grouped_by.value)
             count = group.total_count or 0
-
-            # Get sample to extract category hierarchy
-            sample = self.collection.query.fetch_objects(
-                filters=Filter.by_property("product_class").equal(product_class),
-                limit=1,
-            )
-            hierarchy = ""
-            if sample.objects:
-                hierarchy = str(sample.objects[0].properties.get("category_hierarchy", ""))
+            hierarchy = class_to_hierarchy.get(product_class, "")
 
             classes.append(
                 CategoryInfo(

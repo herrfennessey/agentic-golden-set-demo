@@ -42,7 +42,7 @@ def test_search(query: str, limit: int = 10) -> float:
         for i, product in enumerate(results, 1):
             print(f"\nResult {i}:")
             print(f"   Product ID: {product.product_id}")
-            print(f"   Product Name:{product.product_name}")
+            print(f"   Product Name: {product.product_name}")
             print(f"   Class: {product.product_class}")
             print(f"   Category: {product.category_hierarchy}")
             if product.description_snippet:
