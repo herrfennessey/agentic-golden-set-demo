@@ -272,15 +272,7 @@ class WeaviateClient:
             return_metadata=MetadataQuery(score=True),
         )
 
-        return [
-            ProductSummary.model_validate(
-                {
-                    **obj.properties,
-                    "description_snippet": str(obj.properties.get("product_description", "")),
-                }
-            )
-            for obj in results.objects
-        ]
+        return [ProductSummary.model_validate(obj.properties) for obj in results.objects]
 
     def get_by_class(self, product_class: str, limit: int = 100) -> list[ProductSummary]:
         """
@@ -298,15 +290,7 @@ class WeaviateClient:
             limit=limit,
         )
 
-        return [
-            ProductSummary.model_validate(
-                {
-                    **obj.properties,
-                    "description_snippet": str(obj.properties.get("product_description", "")),
-                }
-            )
-            for obj in results.objects
-        ]
+        return [ProductSummary.model_validate(obj.properties) for obj in results.objects]
 
     def get_by_ids(self, product_ids: list[str], limit: int = 50) -> list[Product]:
         """

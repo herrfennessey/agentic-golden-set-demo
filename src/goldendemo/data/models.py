@@ -76,18 +76,20 @@ class Product(BaseModel):
             product_name=self.product_name,
             product_class=self.product_class,
             category_hierarchy=self.category_hierarchy,
-            description_snippet=self.product_description[:200] if self.product_description else "",
+            product_description=self.product_description,
+            product_features=self.product_features,
         )
 
 
 class ProductSummary(BaseModel):
-    """Lightweight product summary for agent tool responses."""
+    """Product data for agent tool responses."""
 
     product_id: str
     product_name: str
     product_class: str
     category_hierarchy: str
-    description_snippet: str = ""
+    product_description: str = ""
+    product_features: str = ""
 
 
 class Query(BaseModel):

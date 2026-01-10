@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Agent settings
     agent_max_iterations: int = 20
     agent_max_products: int = 500
+    agent_model: str = "gpt-5-nano"
+    agent_reasoning_effort: str = "medium"  # low, medium, high
+    agent_reasoning_summary: bool = True
 
 
 settings = Settings()

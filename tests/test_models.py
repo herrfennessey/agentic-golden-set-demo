@@ -87,12 +87,14 @@ class TestProduct:
             product_class="Sofas",
             category_hierarchy="Furniture / Living Room / Sofas",
             product_description="A nice sofa for your living room.",
+            product_features="Color:Blue|Material:Velvet",
         )
         summary = product.to_summary()
         assert summary.product_id == "123"
         assert summary.product_name == "Test Product"
         assert summary.product_class == "Sofas"
-        assert summary.description_snippet == "A nice sofa for your living room."
+        assert summary.product_description == "A nice sofa for your living room."
+        assert summary.product_features == "Color:Blue|Material:Velvet"
 
 
 class TestProductRelevance:
