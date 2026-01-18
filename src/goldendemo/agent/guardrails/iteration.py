@@ -20,18 +20,18 @@ class IterationBudgetGuardrail(Guardrail):
         self,
         max_iterations: int = 20,
         min_iterations_before_submit: int = 3,
-        warn_at_iteration: int = 15,
+        warn_at_iteration: int | None = None,
     ):
         """Initialize the iteration budget guardrail.
 
         Args:
             max_iterations: Maximum allowed iterations.
             min_iterations_before_submit: Minimum iterations before submission allowed.
-            warn_at_iteration: Iteration at which to warn agent to converge.
+            warn_at_iteration: Optional iteration number to start warning. Defaults to max_iterations - 5.
         """
         self.max_iterations = max_iterations
         self.min_iterations_before_submit = min_iterations_before_submit
-        self.warn_at_iteration = warn_at_iteration
+        self.warn_at_iteration = warn_at_iteration if warn_at_iteration is not None else max_iterations - 5
 
     @property
     def name(self) -> str:

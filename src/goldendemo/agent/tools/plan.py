@@ -141,6 +141,13 @@ class CompleteStepTool(BaseTool):
         if not current_step:
             return ToolResult.fail("No current step to complete. Plan may already be finished.")
 
+        # Ensure the category was actually browsed before completing
+        if current_step.products_processed == 0:
+            return ToolResult.fail(
+                f"Cannot complete step for '{current_step.category}' without browsing. "
+                f"Call browse_category(product_class='{current_step.category}') first."
+            )
+
         # Complete the step and advance
         has_more_steps = state.complete_current_step(summary)
         state.record_tool_call(self.name)
@@ -151,7 +158,7 @@ class CompleteStepTool(BaseTool):
             next_step = state.get_current_step()
             return ToolResult.ok(
                 {
-                    "status": "step_completed",
+                    "status": "plan_step_completed",
                     "completed_step": current_step.category,
                     "next_step": next_step.category if next_step else None,
                     "progress": f"{completed_count}/{len(state.plan)} steps complete",

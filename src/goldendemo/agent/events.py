@@ -11,15 +11,14 @@ class EventType(str, Enum):
 
     STARTED = "started"
     ITERATION_START = "iteration_start"
-    PHASE_CHANGE = "phase_change"
-    THINKING = "thinking"
-    REASONING = "reasoning"
+    EXECUTION_PHASE_STARTED = "execution_phase_started"
+    REASONING = "reasoning"  # Reasoning summaries from OpenAI Responses API
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     GUARDRAIL_WARNING = "guardrail_warning"
     GUARDRAIL_FAILURE = "guardrail_failure"
     JUDGMENT_ADDED = "judgment_added"
-    STEP_COMPLETED = "step_completed"
+    PLAN_STEP_COMPLETED = "plan_step_completed"
     COMPLETED = "completed"
     ERROR = "error"
 
@@ -57,16 +56,8 @@ def iteration_start_event(iteration: int, max_iterations: int) -> AgentEvent:
     )
 
 
-def thinking_event(content: str) -> AgentEvent:
-    """Create a thinking event (model's internal reasoning)."""
-    return AgentEvent(
-        type=EventType.THINKING,
-        data={"content": content},
-    )
-
-
 def reasoning_event(summary: str, reasoning_id: str | None = None) -> AgentEvent:
-    """Create a reasoning event (from Responses API)."""
+    """Create a reasoning event from OpenAI Responses API reasoning summaries."""
     return AgentEvent(
         type=EventType.REASONING,
         data={"summary": summary, "reasoning_id": reasoning_id},
@@ -144,16 +135,20 @@ def completed_event(
     judgments_count: int,
     tool_calls: int,
     warnings: list[str] | None = None,
+    token_usage: dict[str, int] | None = None,
 ) -> AgentEvent:
     """Create a completed event."""
+    data = {
+        "status": status,
+        "judgments_count": judgments_count,
+        "tool_calls": tool_calls,
+        "warnings": warnings or [],
+    }
+    if token_usage:
+        data["token_usage"] = token_usage
     return AgentEvent(
         type=EventType.COMPLETED,
-        data={
-            "status": status,
-            "judgments_count": judgments_count,
-            "tool_calls": tool_calls,
-            "warnings": warnings or [],
-        },
+        data=data,
     )
 
 
@@ -165,31 +160,26 @@ def error_event(error: str, recoverable: bool = False) -> AgentEvent:
     )
 
 
-def phase_change_event(
-    from_phase: str,
-    to_phase: str,
-    plan_steps: int | None = None,
-) -> AgentEvent:
-    """Create a phase change event."""
+def execution_phase_started_event(plan_steps: int) -> AgentEvent:
+    """Create an event indicating the execution phase has started.
+
+    Emitted after the discovery phase completes and the agent has submitted a plan.
+    """
     return AgentEvent(
-        type=EventType.PHASE_CHANGE,
-        data={
-            "from_phase": from_phase,
-            "to_phase": to_phase,
-            "plan_steps": plan_steps,
-        },
+        type=EventType.EXECUTION_PHASE_STARTED,
+        data={"plan_steps": plan_steps},
     )
 
 
-def step_completed_event(
+def plan_step_completed_event(
     step_index: int,
     category: str,
     summary: str,
     has_more_steps: bool,
 ) -> AgentEvent:
-    """Create a step completed event."""
+    """Create an event indicating a plan step (category browse) completed."""
     return AgentEvent(
-        type=EventType.STEP_COMPLETED,
+        type=EventType.PLAN_STEP_COMPLETED,
         data={
             "step_index": step_index,
             "category": category,

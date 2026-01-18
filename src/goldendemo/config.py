@@ -34,5 +34,21 @@ class Settings(BaseSettings):
     agent_reasoning_effort: str = "medium"  # low, medium, high
     agent_reasoning_summary: bool = True
 
+    # Judgment subagent settings (isolated context for product evaluation)
+    judge_model: str = "gpt-5-nano"
+    judge_reasoning_effort: str = "medium"  # low, medium, high
+    judge_chunk_size: int = 100  # Products per judgment batch
+    judge_max_workers: int = 5  # Parallel judgment workers
+    judge_max_output_tokens: int = 16000  # Max tokens for judgment response
+    judge_max_retries: int = 2  # Retry attempts on failure
+
+    # Category browsing limits
+    browse_product_limit: int = 2000  # Max products to fetch per category
+
+    # Golden set composition thresholds
+    min_exact_judgments: int = 5  # Minimum Exact (2) judgments required
+    min_partial_judgments: int = 3  # Minimum Partial (1) judgments required
+    min_total_judgments: int = 50  # Minimum total judgments required
+
 
 settings = Settings()

@@ -102,6 +102,28 @@ Judgment moves INSIDE the `browse_category` tool:
 - No accumulation between pages or steps
 - Can process categories of any size
 
+### Implementation Status: ✅ COMPLETE
+
+**Files Modified:**
+- `src/goldendemo/config.py` - Added `judge_model` and `judge_reasoning_effort` settings
+- `src/goldendemo/agent/state.py` - Added `add_judgments_from_dicts()` helper method
+- `src/goldendemo/agent/judge.py` - NEW: JudgmentSubagent class for isolated product evaluation
+- `src/goldendemo/agent/tools/browse.py` - Integrated subagent, returns summary instead of product data
+- `src/goldendemo/agent/agent.py` - Initialize and pass JudgmentSubagent to browse tool
+- `src/goldendemo/agent/prompts.py` - Simplified execution prompt (no manual judgment needed)
+- `src/goldendemo/agent/tools/__init__.py` - Removed SubmitJudgmentsTool from exports
+- `tests/test_agent_tools.py` - Commented out deprecated SubmitJudgmentsTool tests
+
+**Architecture:**
+```
+Main Agent (browse_category) → Judgment Subagent (judge_products) → Judgments
+      ↓                                  ↓                              ↓
+Summary only                      Fresh context                  Added to state
+(~5KB/iteration)                    (~15KB/page)
+```
+
+**Testing:** All 94 non-integration tests passing ✅
+
 ---
 
 ## Lessons Learned

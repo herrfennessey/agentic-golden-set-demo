@@ -11,7 +11,6 @@ from goldendemo.agent.events import (
     judgment_added_event,
     reasoning_event,
     started_event,
-    thinking_event,
     tool_call_event,
     tool_result_event,
 )
@@ -23,21 +22,22 @@ class TestEventType:
     def test_all_event_types_exist(self):
         """Test that all expected event types are defined."""
         expected = [
-            "started",
-            "iteration_start",
-            "thinking",
-            "reasoning",
-            "tool_call",
-            "tool_result",
-            "guardrail_warning",
-            "guardrail_failure",
-            "judgment_added",
-            "completed",
-            "error",
+            "STARTED",
+            "ITERATION_START",
+            "EXECUTION_PHASE_STARTED",
+            "REASONING",
+            "TOOL_CALL",
+            "TOOL_RESULT",
+            "GUARDRAIL_WARNING",
+            "GUARDRAIL_FAILURE",
+            "JUDGMENT_ADDED",
+            "PLAN_STEP_COMPLETED",
+            "COMPLETED",
+            "ERROR",
         ]
 
         for event_type in expected:
-            assert hasattr(EventType, event_type.upper())
+            assert hasattr(EventType, event_type)
 
 
 class TestAgentEvent:
@@ -80,13 +80,6 @@ class TestEventFactories:
         assert event.type == EventType.ITERATION_START
         assert event.data["iteration"] == 5
         assert event.data["max_iterations"] == 20
-
-    def test_thinking_event(self):
-        """Test thinking event creation."""
-        event = thinking_event("Analyzing the query...")
-
-        assert event.type == EventType.THINKING
-        assert event.data["content"] == "Analyzing the query..."
 
     def test_reasoning_event(self):
         """Test reasoning event creation."""

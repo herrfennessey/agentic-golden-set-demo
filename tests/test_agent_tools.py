@@ -7,12 +7,10 @@ import pytest
 from goldendemo.agent.state import AgentState
 from goldendemo.agent.tools import (
     BrowseCategoryTool,
-    GetProductDetailsTool,
     ListCategoriesTool,
     SearchProductsTool,
-    SubmitJudgmentsTool,
 )
-from goldendemo.data.models import CategoryInfo, Product, ProductSummary
+from goldendemo.data.models import CategoryInfo, ProductSummary
 
 
 @pytest.fixture
@@ -163,7 +161,8 @@ class TestBrowseCategoryTool:
 
     def test_tool_properties(self, mock_weaviate_client: MagicMock):
         """Test tool name and description."""
-        tool = BrowseCategoryTool(mock_weaviate_client)
+        mock_subagent = MagicMock()
+        tool = BrowseCategoryTool(mock_weaviate_client, judgment_subagent=mock_subagent)
 
         assert tool.name == "browse_category"
         assert "product_class" in tool.parameters["properties"]
@@ -173,7 +172,7 @@ class TestBrowseCategoryTool:
         mock_weaviate_client: MagicMock,
         agent_state: AgentState,
     ):
-        """Test successful category browsing."""
+        """Test successful category browsing with judgments."""
         mock_weaviate_client.get_by_class.return_value = [
             ProductSummary(
                 product_id="p1",
@@ -182,13 +181,21 @@ class TestBrowseCategoryTool:
                 category_hierarchy="Furniture/Sofas",
             ),
         ]
-        tool = BrowseCategoryTool(mock_weaviate_client)
+
+        # Mock the judgment subagent
+        mock_subagent = MagicMock()
+        mock_subagent.judge_products.return_value = [{"product_id": "p1", "relevance": 2, "reasoning": "Test"}]
+
+        tool = BrowseCategoryTool(mock_weaviate_client, judgment_subagent=mock_subagent)
 
         result = tool.execute(agent_state, product_class="Sofas")
 
         assert result.success
         assert result.metadata["product_class"] == "Sofas"
         assert agent_state.exploration_metrics.categories_explored == 1
+        # Check that judgments were added
+        assert len(agent_state.judgments) == 1
+        assert agent_state.judgments[0].product_id == "p1"
 
     def test_execute_fails_without_class(
         self,
@@ -196,146 +203,31 @@ class TestBrowseCategoryTool:
         agent_state: AgentState,
     ):
         """Test that execution fails without product_class."""
-        tool = BrowseCategoryTool(mock_weaviate_client)
+        mock_subagent = MagicMock()
+        tool = BrowseCategoryTool(mock_weaviate_client, judgment_subagent=mock_subagent)
 
         result = tool.execute(agent_state)
 
         assert not result.success
 
-
-class TestGetProductDetailsTool:
-    """Tests for GetProductDetailsTool."""
-
-    def test_tool_properties(self, mock_weaviate_client: MagicMock):
-        """Test tool name and description."""
-        tool = GetProductDetailsTool(mock_weaviate_client)
-
-        assert tool.name == "get_product_details"
-        assert "product_ids" in tool.parameters["properties"]
-
-    def test_execute_success(
+    def test_execute_fails_without_subagent(
         self,
         mock_weaviate_client: MagicMock,
         agent_state: AgentState,
     ):
-        """Test successful product details retrieval."""
-        mock_weaviate_client.get_by_ids.return_value = [
-            Product(
+        """Test that execution fails when judgment_subagent is not provided."""
+        mock_weaviate_client.get_by_class.return_value = [
+            ProductSummary(
                 product_id="p1",
-                product_name="Blue Sofa",
+                product_name="Sofa 1",
                 product_class="Sofas",
                 category_hierarchy="Furniture/Sofas",
-                product_description="A nice blue sofa",
             ),
         ]
-        tool = GetProductDetailsTool(mock_weaviate_client)
 
-        result = tool.execute(agent_state, product_ids=["p1"])
+        tool = BrowseCategoryTool(mock_weaviate_client, judgment_subagent=None)
 
-        assert result.success
-        assert result.data[0]["product_description"] == "A nice blue sofa"
-        assert agent_state.exploration_metrics.product_details_retrieved == 1
-
-    def test_execute_caches_products(
-        self,
-        mock_weaviate_client: MagicMock,
-        agent_state: AgentState,
-    ):
-        """Test that products are cached in state."""
-        product = Product(
-            product_id="p1",
-            product_name="Blue Sofa",
-            product_class="Sofas",
-            category_hierarchy="Furniture/Sofas",
-        )
-        mock_weaviate_client.get_by_ids.return_value = [product]
-        tool = GetProductDetailsTool(mock_weaviate_client)
-
-        tool.execute(agent_state, product_ids=["p1"])
-
-        assert "p1" in agent_state.candidate_products
-
-
-class TestSubmitJudgmentsTool:
-    """Tests for SubmitJudgmentsTool."""
-
-    def test_tool_properties(self, mock_weaviate_client: MagicMock):
-        """Test tool name and description."""
-        tool = SubmitJudgmentsTool(mock_weaviate_client)
-
-        assert tool.name == "submit_judgments"
-        assert "judgments" in tool.parameters["properties"]
-
-    def test_execute_fails_without_judgments(
-        self,
-        mock_weaviate_client: MagicMock,
-        agent_state: AgentState,
-    ):
-        """Test that execution fails without judgments."""
-        tool = SubmitJudgmentsTool(mock_weaviate_client)
-
-        result = tool.execute(agent_state)
+        result = tool.execute(agent_state, product_class="Sofas")
 
         assert not result.success
-        assert "required" in result.error.lower()
-
-    def test_execute_accumulates_judgments(
-        self,
-        mock_weaviate_client: MagicMock,
-        agent_state: AgentState,
-    ):
-        """Test that judgments accumulate across multiple calls."""
-        tool = SubmitJudgmentsTool(mock_weaviate_client)
-
-        # First submission
-        result1 = tool.execute(
-            agent_state,
-            judgments=[{"product_id": "p1", "relevance": 2, "reasoning": "Test"}],
-        )
-        assert result1.success
-        assert result1.data["total"] == 1
-
-        # Second submission
-        result2 = tool.execute(
-            agent_state,
-            judgments=[{"product_id": "p2", "relevance": 1, "reasoning": "Test"}],
-        )
-        assert result2.success
-        assert result2.data["total"] == 2
-
-        # Verify state has both judgments
-        assert len(agent_state.judgments) == 2
-
-    def test_execute_deduplicates_by_product_id(
-        self,
-        mock_weaviate_client: MagicMock,
-        agent_state: AgentState,
-    ):
-        """Test that submitting same product_id updates the judgment."""
-        tool = SubmitJudgmentsTool(mock_weaviate_client)
-
-        # First submission
-        tool.execute(
-            agent_state,
-            judgments=[{"product_id": "p1", "relevance": 2, "reasoning": "First"}],
-        )
-
-        # Submit same product with different relevance
-        result = tool.execute(
-            agent_state,
-            judgments=[{"product_id": "p1", "relevance": 1, "reasoning": "Updated"}],
-        )
-
-        assert result.success
-        assert result.data["total"] == 1  # Still only 1 judgment
-        assert agent_state.judgments[0].relevance == 1  # Updated to new value
-
-    def test_to_openai_schema(self, mock_weaviate_client: MagicMock):
-        """Test OpenAI schema generation."""
-        tool = SubmitJudgmentsTool(mock_weaviate_client)
-
-        schema = tool.to_openai_schema()
-
-        assert schema["type"] == "function"
-        assert schema["name"] == "submit_judgments"
-        assert "parameters" in schema
+        assert "requires judgment_subagent" in result.error

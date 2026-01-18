@@ -1,25 +1,83 @@
-"""Golden set generation agent."""
+"""Golden set generation agent.
 
-import json
+Architecture: Two-Phase Execution Model
+========================================
+
+This agent generates search relevance golden sets using a two-phase approach:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 1: DISCOVERY                           │
+    │                                                                 │
+    │  Goal: Understand the catalog and create an exploration plan   │
+    │                                                                 │
+    │  Tools: list_categories, search_products, submit_plan          │
+    │                                                                 │
+    │  Flow:                                                          │
+    │    1. Agent calls list_categories() to see available classes   │
+    │    2. Agent calls search_products(query) to find matches       │
+    │    3. Agent analyzes results and identifies relevant categories│
+    │    4. Agent calls submit_plan() with ordered category list     │
+    │                                                                 │
+    │  Context: Accumulates continuously (no reset)                   │
+    │  Exits when: submit_plan() is called successfully               │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 2: EXECUTION                           │
+    │                                                                 │
+    │  Goal: Browse each planned category and collect judgments      │
+    │                                                                 │
+    │  Tools: browse_category, complete_step, finish_judgments       │
+    │                                                                 │
+    │  Flow (per category):                                           │
+    │    1. Agent calls browse_category(product_class)               │
+    │       - Fetches ALL products in category                       │
+    │       - JudgmentSubagent judges each product in parallel       │
+    │       - Judgments are saved to state automatically             │
+    │    2. Agent calls complete_step() to advance to next category  │
+    │    3. Repeat until all categories complete                     │
+    │    4. Agent calls finish_judgments() to finalize               │
+    │                                                                 │
+    │  Context: Resets at each step boundary (keeps context small)   │
+    │  Exits when: finish_judgments() passes all guardrails          │
+    └─────────────────────────────────────────────────────────────────┘
+
+Key Components:
+- GoldenSetAgent: Main orchestrator (this file)
+- ResponseRunner: Handles OpenAI API calls and tool dispatch (runtime.py)
+- JudgmentSubagent: Evaluates product relevance in parallel (judge.py)
+- AgentState: Tracks iteration, judgments, plan progress (state.py)
+- Guardrails: Enforce exploration/distribution requirements (guardrails/)
+
+Entry Point:
+- run_streaming(query, query_id) -> Generator[AgentEvent, None, None]
+- run(query, query_id) -> AgentResult (blocking wrapper)
+"""
+
 import logging
 from collections.abc import Generator
 from typing import Any
 
 from openai import OpenAI
+from openai.types.responses import FunctionToolParam
 
-from goldendemo.agent.errors import FatalToolError, is_fatal_error
+from goldendemo.agent.constants import (
+    TOOL_BROWSE_CATEGORY,
+    TOOL_COMPLETE_STEP,
+    TOOL_FINISH_JUDGMENTS,
+    TOOL_LIST_CATEGORIES,
+    TOOL_SEARCH_PRODUCTS,
+    TOOL_SUBMIT_PLAN,
+)
 from goldendemo.agent.events import (
     AgentEvent,
     completed_event,
     error_event,
-    guardrail_warning_event,
+    execution_phase_started_event,
     iteration_start_event,
-    phase_change_event,
-    reasoning_event,
+    plan_step_completed_event,
     started_event,
-    step_completed_event,
-    tool_call_event,
-    tool_result_event,
 )
 from goldendemo.agent.guardrails import (
     CategoryBrowsingGuardrail,
@@ -27,7 +85,9 @@ from goldendemo.agent.guardrails import (
     MinimumExplorationGuardrail,
     ScoreDistributionGuardrail,
 )
+from goldendemo.agent.judge import JudgmentSubagent
 from goldendemo.agent.prompts import format_system_prompt
+from goldendemo.agent.runtime import ResponseRunner
 from goldendemo.agent.state import AgentState
 from goldendemo.agent.tools import (
     BaseTool,
@@ -36,7 +96,6 @@ from goldendemo.agent.tools import (
     FinishJudgmentsTool,
     ListCategoriesTool,
     SearchProductsTool,
-    SubmitJudgmentsTool,
     SubmitPlanTool,
 )
 from goldendemo.clients.weaviate_client import WeaviateClient
@@ -44,30 +103,6 @@ from goldendemo.config import settings
 from goldendemo.data.models import AgentResult
 
 logger = logging.getLogger(__name__)
-
-
-def _convert_tools_to_responses_format(tool_definitions: list[dict]) -> list[dict]:
-    """Convert Chat Completions tool definitions to Responses API format.
-
-    The Responses API function tool format:
-    {
-        "type": "function",
-        "name": "...",
-        "description": "...",
-        "parameters": {...},
-        "strict": false
-    }
-    """
-    return [
-        {
-            "type": "function",
-            "name": tool["name"],
-            "description": tool["description"],
-            "parameters": tool["parameters"],
-            "strict": False,  # Our schemas have dynamic objects
-        }
-        for tool in tool_definitions
-    ]
 
 
 class GoldenSetAgent:
@@ -105,26 +140,55 @@ class GoldenSetAgent:
         )
         self.max_iterations = max_iterations if max_iterations is not None else settings.agent_max_iterations
 
-        # Initialize tools
-        self.tools = self._init_tools()
-        tool_definitions = [tool.to_openai_schema() for tool in self.tools.values()]
-        self.responses_tools = _convert_tools_to_responses_format(tool_definitions)
+        # Initialize judgment subagent (shares OpenAI client)
+        self.judgment_subagent = JudgmentSubagent(
+            openai_client=self.openai_client,
+            model=settings.judge_model,
+            reasoning_effort=settings.judge_reasoning_effort,
+        )
 
-        # Initialize guardrails
+        # Initialize guardrails FIRST (shared by agent and FinishJudgmentsTool)
         self.guardrails = self._init_guardrails()
 
+        # Initialize tools (pass shared guardrails instance)
+        self.tools = self._init_tools()
+
+        # Build native OpenAI FunctionToolParam objects for the Responses API
+        self.responses_tools: list[FunctionToolParam] = [
+            FunctionToolParam(
+                type="function",
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.parameters,
+                strict=False,  # Allow flexible parameter handling for dynamic schemas
+            )
+            for tool in self.tools.values()
+        ]
+
+        # Initialize runtime layer
+        self.runner = ResponseRunner(
+            openai_client=self.openai_client,
+            model=self.model,
+            tools=self.tools,
+            responses_tools=self.responses_tools,
+            reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
+        )
+
     def _init_tools(self) -> dict[str, BaseTool]:
-        """Initialize agent tools."""
+        """Initialize agent tools.
+
+        Note: self.guardrails must be initialized before calling this method.
+        """
         return {
-            "search_products": SearchProductsTool(self.weaviate_client),
-            "list_categories": ListCategoriesTool(self.weaviate_client),
-            "browse_category": BrowseCategoryTool(self.weaviate_client),
-            "submit_judgments": SubmitJudgmentsTool(self.weaviate_client),
-            "submit_plan": SubmitPlanTool(self.weaviate_client),
-            "complete_step": CompleteStepTool(self.weaviate_client),
-            "finish_judgments": FinishJudgmentsTool(
+            TOOL_SEARCH_PRODUCTS: SearchProductsTool(self.weaviate_client),
+            TOOL_LIST_CATEGORIES: ListCategoriesTool(self.weaviate_client),
+            TOOL_BROWSE_CATEGORY: BrowseCategoryTool(self.weaviate_client, judgment_subagent=self.judgment_subagent),
+            TOOL_SUBMIT_PLAN: SubmitPlanTool(self.weaviate_client),
+            TOOL_COMPLETE_STEP: CompleteStepTool(self.weaviate_client),
+            TOOL_FINISH_JUDGMENTS: FinishJudgmentsTool(
                 self.weaviate_client,
-                guardrails=self._init_guardrails(),
+                guardrails=self.guardrails,  # Use shared instance
             ),
         }
 
@@ -202,98 +266,170 @@ class GoldenSetAgent:
 
         try:
             # ==================== PHASE 1: DISCOVERY ====================
-            # Normal context accumulation until plan is submitted
-            input_items: list[dict[str, Any]] = [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": format_system_prompt(state),
-                },
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": f'Generate a golden set for the search query: "{query}"',
-                },
-            ]
+            yield from self._run_discovery_phase(state)
 
-            while not state.plan_submitted and state.iteration < self.max_iterations:
-                state.iteration += 1
-                yield iteration_start_event(state.iteration, self.max_iterations)
+            if not state.plan_submitted:
+                # Discovery phase ended without plan - likely max iterations
+                return
 
-                # Call model and process response
-                response = yield from self._call_model_iteration(state, input_items)
-                if response is None:
-                    return  # Error occurred
-
-                # Process response and get function calls
-                function_calls, plan_submitted = yield from self._process_response(
-                    state, response, input_items, accumulate_context=True
-                )
-                if function_calls is None:
-                    return  # Error or completion occurred
-
-                # Check if plan was just submitted
-                if state.plan_submitted:
-                    yield phase_change_event(
-                        from_phase="discovery",
-                        to_phase="execution",
-                        plan_steps=len(state.plan),
-                    )
-                    break
-
-                # Handle no function calls
-                if not function_calls:
-                    yield from self._handle_no_tool_call(state, response, input_items)
-                    continue
-
-                state.clear_guardrail_feedback()
+            yield execution_phase_started_event(plan_steps=len(state.plan))
 
             # ==================== PHASE 2: EXECUTION ====================
-            # Context resets only when starting a NEW step, not every iteration
-            # This allows: browse → judge → submit → browse next page within same context
-            current_step_at_start = state.current_step_index
-            input_items = self._build_execution_context(state)
-
-            while state.iteration < self.max_iterations:
-                state.iteration += 1
-                yield iteration_start_event(state.iteration, self.max_iterations)
-
-                # Check if we moved to a new step - if so, reset context
-                if state.current_step_index != current_step_at_start:
-                    current_step_at_start = state.current_step_index
-                    input_items = self._build_execution_context(state)
-
-                # Call model and process response
-                response = yield from self._call_model_iteration(state, input_items)
-                if response is None:
-                    return  # Error occurred
-
-                # Process response - ACCUMULATE context within same step
-                function_calls, finished = yield from self._process_response(
-                    state, response, input_items, accumulate_context=True
-                )
-                if function_calls is None:
-                    return  # Error or completion occurred
-
-                if finished:
-                    return  # Successfully completed
-
-                # Handle no function calls
-                if not function_calls:
-                    yield from self._handle_no_tool_call(state, response, input_items)
-                    continue
-
-                state.clear_guardrail_feedback()
-
-            # Max iterations reached
-            yield error_event(
-                f"Maximum iterations ({self.max_iterations}) reached without successful submission",
-                recoverable=False,
-            )
+            yield from self._run_execution_phase(state)
 
         except Exception as e:
             logger.exception("Agent execution failed")
             yield error_event(str(e), recoverable=False)
+
+    def _run_discovery_phase(self, state: AgentState) -> Generator[AgentEvent, None, None]:
+        """Run the discovery phase until plan is submitted.
+
+        Args:
+            state: Agent state.
+
+        Yields:
+            AgentEvent objects.
+        """
+        input_items: list[dict[str, Any]] = [
+            {
+                "type": "message",
+                "role": "system",
+                "content": format_system_prompt(state),
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": f'Generate a golden set for the search query: "{state.query}"',
+            },
+        ]
+
+        while not state.plan_submitted and state.iteration < self.max_iterations:
+            state.iteration += 1
+            yield iteration_start_event(state.iteration, self.max_iterations)
+
+            # Call model
+            response = yield from self.runner.call_model(state, input_items, self.guardrails)
+            if response is None:
+                return  # Error occurred
+
+            # Process response
+            result = yield from self.runner.process_response(state, response, input_items, accumulate_context=True)
+
+            if result.error:
+                return  # Fatal error occurred
+
+            # Check if plan was just submitted
+            if state.plan_submitted:
+                break
+
+            # Handle no function calls
+            if not result.function_calls:
+                yield from self.runner.handle_no_tool_call(state, response, input_items)
+                continue
+
+            state.clear_guardrail_feedback()
+
+        # Check if we hit max iterations without plan
+        if not state.plan_submitted:
+            yield error_event(
+                f"Maximum iterations ({self.max_iterations}) reached without plan submission",
+                recoverable=False,
+            )
+
+    def _run_execution_phase(self, state: AgentState) -> Generator[AgentEvent, None, None]:
+        """Run the execution phase until completion.
+
+        Args:
+            state: Agent state.
+
+        Yields:
+            AgentEvent objects.
+        """
+        current_step_at_start = state.current_step_index
+        input_items = self._build_execution_context(state)
+
+        while state.iteration < self.max_iterations:
+            state.iteration += 1
+            yield iteration_start_event(state.iteration, self.max_iterations)
+
+            # Check if we moved to a new step - if so, reset context
+            if state.current_step_index != current_step_at_start:
+                current_step_at_start = state.current_step_index
+                input_items = self._build_execution_context(state)
+
+            # Call model
+            response = yield from self.runner.call_model(state, input_items, self.guardrails)
+            if response is None:
+                return  # Error occurred
+
+            # Process response
+            result = yield from self.runner.process_response(state, response, input_items, accumulate_context=True)
+
+            if result.error:
+                return  # Fatal error occurred
+
+            # Handle special tool results
+            finished = yield from self._handle_tool_results(state, result)
+            if finished:
+                return  # Successfully completed
+
+            # Handle no function calls
+            if not result.function_calls:
+                yield from self.runner.handle_no_tool_call(state, response, input_items)
+                continue
+
+            state.clear_guardrail_feedback()
+
+        # Max iterations reached
+        yield error_event(
+            f"Maximum iterations ({self.max_iterations}) reached without successful submission",
+            recoverable=False,
+        )
+
+    @staticmethod
+    def _handle_tool_results(state: AgentState, result: Any) -> Generator[AgentEvent, None, bool]:
+        """Handle special tool results that affect flow control.
+
+        Args:
+            state: Agent state.
+            result: ProcessedResult from runtime.
+
+        Yields:
+            AgentEvent objects.
+
+        Returns:
+            True if execution is complete, False to continue.
+        """
+        for tool_result in result.tool_results:
+            tool_name = tool_result.tool_name
+
+            # Check if finish_judgments completed successfully
+            if tool_name == TOOL_FINISH_JUDGMENTS and tool_result.success:
+                warnings = []
+                if hasattr(tool_result.result, "data") and tool_result.result.data:
+                    warnings = tool_result.result.data.get("warnings", [])
+                yield completed_event(
+                    status="success" if not warnings else "needs_review",
+                    judgments_count=len(state.judgments),
+                    tool_calls=len(state.tool_call_history),
+                    warnings=warnings,
+                    token_usage=state.token_usage.to_dict(),
+                )
+                return True
+
+            # Handle step completion
+            if tool_name == TOOL_COMPLETE_STEP and tool_result.success:
+                step_idx = state.current_step_index - 1  # Already advanced
+                if 0 <= step_idx < len(state.plan):
+                    completed_step = state.plan[step_idx]
+                    yield plan_step_completed_event(
+                        step_index=step_idx,
+                        category=completed_step.category,
+                        summary=completed_step.summary or "",
+                        has_more_steps=state.current_step_index < len(state.plan),
+                    )
+
+        return False
 
     def _build_execution_context(self, state: AgentState) -> list[dict[str, Any]]:
         """Build fresh context for execution phase (called at step boundaries)."""
@@ -310,273 +446,18 @@ class GoldenSetAgent:
             },
         ]
 
-    def _get_execution_user_message(self, state: AgentState) -> str:
+    @staticmethod
+    def _get_execution_user_message(state: AgentState) -> str:
         """Generate the user message for execution phase iterations."""
         step = state.get_current_step()
         if not step:
             return "All plan steps are complete. Call finish_judgments() to finalize your golden set."
 
-        if step.products_browsed == 0:
-            return f'Start browsing category "{step.category}". Call browse_category(product_class="{step.category}", offset=0).'
+        if step.products_processed == 0:
+            return f'Start browsing category "{step.category}". Call browse_category(product_class="{step.category}").'
         else:
+            # Category already browsed - should call complete_step
             return (
-                f'Continue browsing category "{step.category}". '
-                f"You have browsed {step.products_browsed} products so far. "
-                f'Call browse_category(product_class="{step.category}", offset={step.current_offset}).'
+                f'Category "{step.category}" has been browsed ({step.products_processed} products processed). '
+                f'Call complete_step(summary="...") to mark this category done and move to the next.'
             )
-
-    def _call_model_iteration(
-        self,
-        state: AgentState,
-        input_items: list[dict[str, Any]],
-    ) -> Generator[AgentEvent, None, Any]:
-        """Call the model for one iteration.
-
-        Returns the response object or None if an error occurred.
-        """
-        # Check iteration budget guardrail
-        budget_check = self.guardrails["iteration_budget"].check(state)
-        if budget_check.warning:
-            yield guardrail_warning_event("iteration_budget", budget_check.warning)
-            input_items.append(
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": f"WARNING: {budget_check.warning}",
-                }
-            )
-
-        try:
-            # Build reasoning config
-            reasoning_config: dict[str, Any] = {"effort": self.reasoning_effort}
-            include_params: list[str] = []
-
-            if self.reasoning_summary:
-                reasoning_config["summary"] = "auto"
-                include_params.append("reasoning.encrypted_content")
-
-            response = self.openai_client.responses.create(
-                model=self.model,
-                input=input_items,
-                tools=self.responses_tools,
-                reasoning=reasoning_config,
-                include=include_params if include_params else None,
-                max_output_tokens=25000,
-            )
-            return response
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Model call failed: {e}")
-
-            if "verified to generate reasoning summaries" in error_msg:
-                yield error_event(
-                    "Reasoning summaries require a verified OpenAI organization.\n"
-                    "Options:\n"
-                    "  1. Verify your org: https://platform.openai.com/settings/organization/general\n"
-                    "  2. Run with --no-reasoning-summary flag to disable summaries",
-                    recoverable=False,
-                )
-            else:
-                yield error_event(error_msg, recoverable=False)
-            return None
-
-    def _process_response(
-        self,
-        state: AgentState,
-        response: Any,
-        input_items: list[dict[str, Any]],
-        accumulate_context: bool,
-    ) -> Generator[AgentEvent, None, tuple[list | None, bool]]:
-        """Process model response and execute tool calls.
-
-        Args:
-            state: Current agent state.
-            response: Model response object.
-            input_items: Current conversation context.
-            accumulate_context: Whether to add results to input_items.
-
-        Returns:
-            Tuple of (function_calls list, finished bool).
-            Returns (None, False) if an error occurred.
-        """
-        # Check for incomplete response
-        if response.status == "incomplete":
-            reason = getattr(response.incomplete_details, "reason", "unknown")
-            logger.warning(f"Response incomplete: {reason}")
-
-        function_calls = []
-        finished = False
-
-        for item in response.output:
-            # Handle reasoning items
-            if item.type == "reasoning":
-                if item.summary:
-                    summary_texts = [s.text for s in item.summary if hasattr(s, "text") and s.text]
-                    if summary_texts:
-                        yield reasoning_event(" ".join(summary_texts), item.id)
-
-                if accumulate_context:
-                    input_items.append(
-                        {
-                            "type": "reasoning",
-                            "id": item.id,
-                            "summary": [
-                                {"type": s.type, "text": s.text}
-                                for s in (item.summary or [])
-                                if hasattr(s, "type") and hasattr(s, "text")
-                            ],
-                            "encrypted_content": getattr(item, "encrypted_content", None),
-                        }
-                    )
-
-            # Handle message items
-            elif item.type == "message":
-                content = item.content[0].text if item.content else ""
-                if content and accumulate_context:
-                    input_items.append(
-                        {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": content,
-                        }
-                    )
-
-            # Handle function calls
-            elif item.type == "function_call":
-                function_calls.append(item)
-                if accumulate_context:
-                    input_items.append(
-                        {
-                            "type": "function_call",
-                            "id": item.id,
-                            "call_id": item.call_id,
-                            "name": item.name,
-                            "arguments": item.arguments,
-                        }
-                    )
-
-        # Execute function calls
-        for func_call in function_calls:
-            tool_name = func_call.name
-            call_id = func_call.call_id
-
-            try:
-                tool_args = json.loads(func_call.arguments)
-            except json.JSONDecodeError:
-                tool_args = {}
-
-            yield tool_call_event(tool_name, tool_args, call_id)
-
-            # Execute tool
-            try:
-                result = self._execute_tool(tool_name, state, tool_args)
-            except FatalToolError as e:
-                logger.error(f"Fatal tool error, aborting: {e}")
-                yield error_event(str(e), recoverable=False)
-                return (None, False)
-
-            yield tool_result_event(tool_name, result.to_dict(), call_id, result.success)
-
-            if accumulate_context:
-                input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": json.dumps(result.to_dict()),
-                    }
-                )
-
-            # Handle special tools
-            if tool_name == "finish_judgments" and result.success:
-                warnings = result.data.get("warnings", [])
-                yield completed_event(
-                    status="success" if not warnings else "needs_review",
-                    judgments_count=len(state.judgments),
-                    tool_calls=len(state.tool_call_history),
-                    warnings=warnings,
-                )
-                return (None, True)  # Signal completion
-
-            if tool_name == "complete_step" and result.success:
-                step_data = result.data
-                yield step_completed_event(
-                    step_index=state.current_step_index - 1,  # Already advanced
-                    category=step_data.get("completed_step", ""),
-                    summary=tool_args.get("summary", ""),
-                    has_more_steps=step_data.get("status") != "plan_complete",
-                )
-
-            # Update step progress for browse_category
-            if tool_name == "browse_category" and result.success:
-                offset = tool_args.get("offset", 0)
-                result_count = result.metadata.get("result_count", 0)
-                state.update_step_progress(
-                    offset=offset + result_count,
-                    products_count=result_count,
-                )
-
-        return (function_calls, finished)
-
-    def _handle_no_tool_call(
-        self,
-        state: AgentState,
-        response: Any,
-        input_items: list[dict[str, Any]],
-    ) -> Generator[AgentEvent, None, None]:
-        """Handle case where model returns no function calls."""
-        assistant_msg = ""
-        for item in response.output:
-            if item.type == "message" and item.content:
-                assistant_msg = item.content[0].text if item.content else ""
-                break
-
-        logger.warning(f"Model returned no function calls: {assistant_msg[:200] if assistant_msg else 'no message'}")
-
-        feedback = "You returned text instead of a tool call. You MUST call a tool every turn. "
-        if state.plan_submitted:
-            step = state.get_current_step()
-            if step:
-                feedback += f'Call browse_category(product_class="{step.category}", offset={step.current_offset}).'
-            else:
-                feedback += "All steps complete - call finish_judgments() to finalize."
-        else:
-            feedback += "Call list_categories() or search_products() to explore the catalog."
-
-        state.add_guardrail_feedback(feedback)
-        yield guardrail_warning_event("no_tool_call", "Agent returned text - reminded to use tools")
-
-    def _execute_tool(self, tool_name: str, state: AgentState, args: dict[str, Any]) -> Any:
-        """Execute a tool by name.
-
-        Args:
-            tool_name: Name of the tool to execute.
-            state: Current agent state.
-            args: Tool arguments.
-
-        Returns:
-            ToolResult from the tool execution.
-
-        Raises:
-            FatalToolError: If a fatal infrastructure error occurs.
-        """
-        from goldendemo.agent.tools.base import ToolResult
-
-        tool = self.tools.get(tool_name)
-        if not tool:
-            return ToolResult.fail(f"Unknown tool: {tool_name}")
-
-        # Clean args - remove null/None values that model sometimes sends
-        cleaned_args = {k: v for k, v in args.items() if v is not None and k != "null"}
-
-        try:
-            return tool.execute(state, **cleaned_args)
-        except Exception as e:
-            # Classify error as fatal or recoverable
-            if is_fatal_error(e):
-                logger.error(f"Fatal error in tool {tool_name}: {e}")
-                raise FatalToolError(f"Tool {tool_name} failed with infrastructure error: {e}") from e
-
-            # Recoverable error - return as tool result so agent can adjust
-            logger.warning(f"Recoverable error in tool {tool_name}: {e}")
-            return ToolResult.fail(f"Tool error (recoverable): {e}")

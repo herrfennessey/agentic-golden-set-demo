@@ -73,6 +73,16 @@ class SearchProductsTool(BaseTool):
         if not query:
             return ToolResult.fail("Query string is required")
 
+        # Check for duplicate query
+        normalized_query = query.lower().strip()
+        existing_queries = {s.query.lower().strip() for s in state.search_history}
+        if normalized_query in existing_queries:
+            return ToolResult.fail(
+                f"You already searched for '{query}'. Duplicate searches don't count toward exploration. "
+                f"Try a different query: synonyms, related terms, or different product attributes. "
+                f"Previous searches: {[s.query for s in state.search_history]}"
+            )
+
         try:
             results = self.weaviate_client.hybrid_search(
                 query=query,
@@ -86,21 +96,37 @@ class SearchProductsTool(BaseTool):
             state.record_tool_call(self.name)
 
             # Convert to serializable format (truncate description to avoid context overflow)
+            # Note: product_class is now an array
             products_data = [
                 {
                     "product_id": p.product_id,
                     "product_name": p.product_name,
-                    "product_class": p.product_class,  # Matches list_categories - use this for browse_category
+                    "product_class": p.product_class,  # Array of category names
                     "description": p.product_description[:200] if p.product_description else "",
                 }
                 for p in results
             ]
+
+            # Aggregate categories found in results (for planning)
+            # product_class is an array, count each individual category
+            category_counts: dict[str, int] = {}
+            for p in results:
+                if p.product_class:
+                    for cls in p.product_class:
+                        if cls:
+                            category_counts[cls] = category_counts.get(cls, 0) + 1
+
+            # Sort by count descending
+            top_categories = sorted(category_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
             return ToolResult.ok(
                 products_data,
                 query=query,
                 result_count=len(results),
                 alpha=alpha,
+                message=f"Found {len(results)} products across {len(category_counts)} unique categories. "
+                f"Top categories: {', '.join([f'{cat} ({count})' for cat, count in top_categories[:5]])}. "
+                f"IMPORTANT: Use individual category names for submit_plan.",
             )
 
         except Exception as e:

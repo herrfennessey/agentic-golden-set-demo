@@ -2,6 +2,7 @@
 """Run the golden set agent on a query."""
 
 import argparse
+import logging
 
 from goldendemo.agent.agent import GoldenSetAgent
 from goldendemo.clients.weaviate_client import WeaviateClient
@@ -19,7 +20,26 @@ def main():
         "--no-reasoning-summary", action="store_true", help="Disable reasoning summaries (for unverified OpenAI orgs)"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+
+    # Configure logging
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(levelname)s [%(name)s] %(message)s",
+        )
+    elif args.verbose:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s [%(name)s] %(message)s",
+        )
+    else:
+        # Only show warnings and errors
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(levelname)s: %(message)s",
+        )
 
     print(f'🔍 Generating golden set for: "{args.query}"')
     print("-" * 50)
@@ -78,12 +98,11 @@ def main():
                             count = result.get("result_count", len(result.get("data", [])))
                             print(f"     ✅ Found {count} products")
                         elif tool_name == "browse_category":
-                            count = result.get("result_count", len(result.get("data", [])))
-                            total = result.get("total_in_category")
-                            if total:
-                                print(f"     ✅ Retrieved {count} of {total} products in category")
-                            else:
-                                print(f"     ✅ Found {count} products in category")
+                            data = result.get("data", {})
+                            judgments_added = data.get("judgments_added", 0)
+                            count = result.get("result_count", 0)
+                            total = result.get("total_in_category", 0)
+                            print(f"     ✅ Judged all {total} products in parallel, added {judgments_added} judgments")
                         elif tool_name == "list_categories":
                             count = result.get("total_categories", len(result.get("data", [])))
                             print(f"     ✅ Found {count} categories")
@@ -118,13 +137,28 @@ def main():
                     if summary:
                         print(f"  💭 {summary}")
                 elif event.type.value == "guardrail_warning":
-                    print(f"  ⚠️  {event.data['message']}")
+                    message = event.data.get("message", event.data.get("warning", "Warning"))
+                    print(f"  ⚠️  {message}")
                 elif event.type.value == "guardrail_failure":
-                    print(f"  🚫 {event.data['message']}")
+                    message = event.data.get("message", event.data.get("error", "Failure"))
+                    print(f"  🚫 {message}")
                 elif event.type.value == "completed":
                     print("-" * 50)
                     print(f"✅ Completed: {event.data['judgments_count']} judgments")
+
+                    # Display token usage if available
+                    if token_usage := event.data.get("token_usage"):
+                        print("\n💰 Token Usage:")
+                        print(f"   Input tokens:     {token_usage['input_tokens']:,}")
+                        print(f"   Output tokens:    {token_usage['output_tokens']:,}")
+                        if token_usage.get("reasoning_tokens", 0) > 0:
+                            print(f"   Reasoning tokens: {token_usage['reasoning_tokens']:,}")
+                        if token_usage.get("cached_tokens", 0) > 0:
+                            print(f"   Cached tokens:    {token_usage['cached_tokens']:,}")
+                        print(f"   Total tokens:     {token_usage['total_tokens']:,}")
+
                     if event.data.get("warnings"):
+                        print()  # Add blank line before warnings
                         for w in event.data["warnings"]:
                             print(f"   ⚠️  {w}")
                 elif event.type.value == "error":

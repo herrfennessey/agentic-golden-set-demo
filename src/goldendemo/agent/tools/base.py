@@ -29,10 +29,16 @@ class ToolResult:
         return cls(success=False, error=error)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        if self.success:
-            return {"success": True, "data": self.data, **self.metadata}
-        return {"success": False, "error": self.error}
+        """Convert to dictionary for JSON serialization.
+
+        Always returns a consistent shape: {success, data, error, metadata}
+        """
+        return {
+            "success": self.success,
+            "data": self.data,
+            "error": self.error,
+            "metadata": self.metadata,
+        }
 
 
 class BaseTool(ABC):
@@ -80,16 +86,6 @@ class BaseTool(ABC):
             ToolResult with success/failure and data.
         """
         ...
-
-    def to_openai_schema(self) -> dict[str, Any]:
-        """Convert to OpenAI function calling schema."""
-        return {
-            "type": "function",
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.parameters,
-            "strict": False,  # Allow flexible parameter handling
-        }
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self.name!r})"

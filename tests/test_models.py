@@ -92,9 +92,23 @@ class TestProduct:
         summary = product.to_summary()
         assert summary.product_id == "123"
         assert summary.product_name == "Test Product"
-        assert summary.product_class == "Sofas"
+        assert summary.product_class == ["Sofas"]  # Now a list
         assert summary.product_description == "A nice sofa for your living room."
         assert summary.product_features == "Color:Blue|Material:Velvet"
+
+    def test_to_summary_multi_category(self):
+        """Test conversion to summary with multiple categories."""
+        product = Product(
+            product_id="456",
+            product_name="Multi Cat Product",
+            product_class="Accent Chairs|Office Chairs",
+            category_hierarchy="Furniture / Chairs",
+            product_description="A versatile chair.",
+            product_features="",
+        )
+        summary = product.to_summary()
+        assert summary.product_id == "456"
+        assert summary.product_class == ["Accent Chairs", "Office Chairs"]
 
 
 class TestProductRelevance:

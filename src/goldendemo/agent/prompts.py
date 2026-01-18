@@ -9,47 +9,49 @@ if TYPE_CHECKING:
 # Shared scoring guidelines used in both phases
 SCORING_GUIDELINES = """## CRITICAL: Scoring Guidelines (WANDS Methodology)
 
+Judge products as either **Exact (2)** or **Partial (1)**. Only include products that are relevant to the query.
+
 ### Exact (2)
-The surfaced product fully matches the search query.
+The product **fully matches** the search query. This is exactly what the user is looking for.
+
+**Examples:**
+- Query: "modern sofa" → Modern sofa
+- Query: "driftwood mirror" → Driftwood-framed mirror
+- Query: "blue velvet chair" → Blue velvet chair
 
 ### Partial (1)
-The surfaced product does not fully match the search query. It only matches the target entity of the query, but does not satisfy the modifiers for the query.
+The product **does not fully match** the search query. It matches the target entity but does not satisfy all modifiers.
 
-### Irrelevant (0)
-The product is not relevant to the query.
+**Key principle**: Be generous with Partial. If the product contains elements from the query but isn't exactly what was searched for, mark it Partial.
 
-### Examples
-| Query | Exact (2) | Partial (1) | Irrelevant (0) |
-|-------|-----------|-------------|----------------|
-| "modern sofa" | Modern sofas | Traditional sofas, sectionals | Sofa tables, chairs |
-| "blue velvet chair" | Blue velvet chairs | Red chairs, leather chairs | Tables, lamps |
-| "outdoor dining set" | Outdoor dining sets | Indoor dining sets | Chairs only, umbrellas |
+**Examples:**
+- Query: "modern sofa" → Traditional sofa (has sofa, wrong style)
+- Query: "blue velvet chair" → Red velvet chair (has velvet chair, wrong color)
+- Query: "driftwood mirror" → Mirror with driftwood finish in description
+- Query: "outdoor dining set" → Indoor dining set (has dining set, wrong location)
 
 ---
 
-## CRITICAL: The Primary Identity Test
+## Decision Framework
 
-**Ask yourself: "If I were a customer searching for '{query}', would I expect to find this product?"**
+For each product, ask:
 
-This is the MOST IMPORTANT question for every product you evaluate.
+1. **Is this exactly what the user searched for?**
+   - YES → Exact (2)
+   - NO → Continue to next question
 
-### The Test
-For each product, ask: **Is [search term] the PRIMARY IDENTITY of this product?**
+2. **Does this product contain key elements from the query (materials, types, features)?**
+   - YES → Partial (1)
+   - NO → Skip this product
 
-| Query | PRIMARY IDENTITY (Relevant) | Related, but not specifically what the user is looking for (Irrelevant) |
-|-------|----------------------------|---------------------------------------------------------------|
-| "coffee table" | Coffee Tables, Cocktail Tables | End tables, Console tables, Dining tables |
-| "sofa" | Sofas, Sectionals, Loveseats | Sofa Tables, Sofa Covers, Throw Pillows |
-| "dinosaur" | Dinosaur wall decor, Dinosaur standups | Rugs with dinosaur prints, Bedding with dinosaurs |
+3. **Would a customer searching for "{query}" find this product relevant?**
+   - YES, even if not perfect → Partial (1)
+   - NO → Skip this product
 
-### The Satisfaction Test
-**Would a customer searching "[query]" be satisfied finding this product?**
-- If YES -> Consider Exact (2) or Partial (1)
-- If NO -> Mark as Irrelevant (0)"""
+**Remember**: Be generous with Partial judgments. Products that share materials, styles, or features with the query should be marked Partial."""
 
 
 DISCOVERY_PROMPT = """You are a search relevance expert creating a golden set for e-commerce product search.
-Your goal is to judge which products are relevant to a user's search query.
 
 ## Your Task
 For the query: "{query}"
@@ -58,11 +60,21 @@ For the query: "{query}"
 
 You are in the DISCOVERY phase. Your goal is to understand the product catalog and create an execution plan.
 
+**IMPORTANT**: In this phase, you are NOT judging products yet. You are only identifying which categories to explore.
+
 ### Steps:
 1. **Call list_categories()** - See all product categories available
-2. **Call search_products("{query}", limit=200)** - Find products matching the query
+2. **Run MULTIPLE diverse searches** - You must run at least 2 unique searches:
+   - The exact query: "{query}"
+   - Variations: synonyms, related terms, specific materials/attributes
+   - Example: For "blue velvet sofa", also search "navy couch", "velvet loveseat", etc.
 3. **Analyze results** - Identify which categories contain relevant products
 4. **Call submit_plan()** - Submit your exploration plan
+
+### CRITICAL: Multiple Searches Required
+- You MUST run at least 2 different search queries before submitting your plan
+- Duplicate searches (same query text) do NOT count - they will be rejected
+- Think about: synonyms, related styles, specific materials, alternative phrasings
 
 ### Your Plan Should Include:
 - **PRIMARY categories** - Where exact matches definitely exist (from search results)
@@ -71,10 +83,8 @@ You are in the DISCOVERY phase. Your goal is to understand the product catalog a
 
 ### Tools Available:
 1. **list_categories()** - Get all product categories
-2. **search_products(query, limit)** - Hybrid search for products
+2. **search_products(query, limit)** - Hybrid search for products (run multiple times with different queries!)
 3. **submit_plan(steps)** - Submit your exploration plan
-
-{scoring_guidelines}
 
 ---
 
@@ -86,18 +96,17 @@ You are running autonomously with NO human interaction.
 ## Current State
 {state_summary}
 
-Start by calling list_categories() and search_products() to understand the catalog."""
+Start by calling list_categories() AND multiple search_products() calls with different query variations."""
 
 
 EXECUTION_PROMPT = """You are a search relevance expert executing your exploration plan.
-Your goal is to thoroughly browse each category and judge product relevance.
 
 ## Your Task
 For the query: "{query}"
 
 ## Phase 2: Execution
 
-You are executing your plan. Browse each category completely, submitting judgments as you go.
+You are executing your plan. Browse each category in your plan.
 
 ## Your Plan
 {plan_summary}
@@ -105,44 +114,33 @@ You are executing your plan. Browse each category completely, submitting judgmen
 ## Current Step
 {current_step_info}
 
-### Instructions:
-1. **Browse the category** - Call browse_category() with the current offset
-2. **Judge ALL products** on the page - Exact (2), Partial (1), or Irrelevant (0)
-3. **Submit judgments** - Call submit_judgments() for products on this page
-4. **Check the response** from browse_category:
-   - If `has_more=true` → browse next page (offset + 100)
-   - If `has_more=false` OR `result_count=0` → call complete_step() with a summary
+### How It Works:
+When you call **browse_category(product_class)**, it automatically:
+1. Fetches **ALL products** from the category at once
+2. **Judges each product's relevance** in parallel (Exact or Partial)
+3. **Saves all judgments** automatically
+4. Returns a summary with judgment counts for the entire category
 
-**CRITICAL**: When browse_category returns 0 products, the category is exhausted.
-Call complete_step() immediately - do NOT keep browsing the same offset.
+You just need to:
+1. **Call browse_category(product_class)** for the current step's category
+2. **Wait for it to complete** (it processes the entire category)
+3. **Call complete_step(summary)** to mark the category done
+4. **Move to next category** or call finish_judgments() when all steps complete
 
 ### Tools Available:
-1. **browse_category(category, offset)** - Get products in a category (100 per page)
-2. **submit_judgments(judgments)** - Submit relevance judgments for products
-3. **complete_step(summary)** - Mark current step done, move to next
-4. **finish_judgments(overall_reasoning)** - Finalize when ALL steps are complete
+1. **browse_category(product_class)** - Browse and auto-judge ALL products in category
+2. **complete_step(summary)** - Mark current step done, move to next
+3. **finish_judgments(overall_reasoning)** - Finalize when ALL steps are complete
 
 {scoring_guidelines}
-
----
-
-## What to Judge
-
-Focus your judgments on:
-1. **ALL Exact matches** - every product that fully matches the query
-2. **ALL Partial matches** - every product that partially matches
-3. **Representative Irrelevant examples** - enough to show what's NOT relevant (10-20 per category is sufficient)
-
-You do NOT need to submit judgments for every Irrelevant product. If a category has 500 products
-and only 30 are relevant, judge those 30 plus ~15 Irrelevant examples.
 
 ---
 
 ## IMPORTANT: Tool-Only Operation
 You are running autonomously with NO human interaction.
 - **ALWAYS respond with tool calls** - never return text-only responses
-- **Submit judgments + fetch next page together** when possible
 - Make decisions independently - never ask for confirmation
+- Products are judged automatically - each browse_category call processes the entire category
 
 ## Current State
 {state_summary}
@@ -163,7 +161,6 @@ def format_discovery_prompt(state: "AgentState") -> str:
 
     return DISCOVERY_PROMPT.format(
         query=state.query,
-        scoring_guidelines=SCORING_GUIDELINES.format(query=state.query),
         state_summary=state_summary,
     )
 
@@ -199,9 +196,15 @@ def _format_current_step(state: "AgentState") -> str:
     lines = [
         f"**Category**: {step.category}",
         f"**Reason**: {step.reason}",
-        f"**Progress**: {step.products_browsed} products browsed",
-        f"**Next offset**: {step.current_offset}",
+        f"**Progress**: {step.products_processed} products processed",
     ]
+
+    # Provide guidance on next action
+    if step.products_processed == 0:
+        lines.append(f'**Next action**: Call browse_category(product_class="{step.category}")')
+    else:
+        lines.append('**Next action**: Call complete_step(summary="...") to move to next category')
+
     return "\n".join(lines)
 
 
@@ -211,7 +214,7 @@ def _format_state_summary(state: "AgentState") -> str:
     lines = [
         f"Iteration: {state.iteration}/{state.max_iterations}",
         f"Products seen: {state.exploration_metrics.unique_products_seen}",
-        f"Judgments submitted: {len(state.judgments)} (Exact: {counts.get(2, 0)}, Partial: {counts.get(1, 0)}, Irrelevant: {counts.get(0, 0)})",
+        f"Judgments submitted: {len(state.judgments)} (Exact: {counts.get(2, 0)}, Partial: {counts.get(1, 0)})",
     ]
 
     if state.guardrail_feedback:

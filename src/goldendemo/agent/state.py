@@ -7,6 +7,44 @@ from goldendemo.data.models import AgentJudgment, CategoryInfo, ProductSummary
 
 
 @dataclass
+class TokenUsage:
+    """Token usage tracking for cost monitoring."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+
+    def add_usage(self, usage_data: dict) -> None:
+        """Add usage from an OpenAI API response.
+
+        Args:
+            usage_data: The usage object from response.usage
+        """
+        self.input_tokens += usage_data.get("input_tokens", 0)
+        self.output_tokens += usage_data.get("output_tokens", 0)
+        self.total_tokens += usage_data.get("total_tokens", 0)
+
+        # Add detailed breakdowns if available
+        input_details = usage_data.get("input_tokens_details", {})
+        self.cached_tokens += input_details.get("cached_tokens", 0)
+
+        output_details = usage_data.get("output_tokens_details", {})
+        self.reasoning_tokens += output_details.get("reasoning_tokens", 0)
+
+    def to_dict(self) -> dict[str, int]:
+        """Convert to dictionary."""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_tokens": self.cached_tokens,
+            "total_tokens": self.total_tokens,
+        }
+
+
+@dataclass
 class ExplorationMetrics:
     """Metrics tracking agent's exploration of the catalog."""
 
@@ -42,8 +80,7 @@ class PlanStep:
     reason: str
     status: str = "pending"  # pending, in_progress, complete
     summary: str | None = None
-    products_browsed: int = 0
-    current_offset: int = 0
+    products_processed: int = 0
 
 
 @dataclass
@@ -63,6 +100,7 @@ class AgentState:
 
     # Exploration tracking
     exploration_metrics: ExplorationMetrics = field(default_factory=ExplorationMetrics)
+    token_usage: TokenUsage = field(default_factory=TokenUsage)
     available_classes: list[CategoryInfo] = field(default_factory=list)
     browsed_categories: list[str] = field(default_factory=list)
     search_history: list[SearchRecord] = field(default_factory=list)
@@ -117,6 +155,33 @@ class AgentState:
         # Remove existing judgment for this product if any
         self.judgments = [j for j in self.judgments if j.product_id != judgment.product_id]
         self.judgments.append(judgment)
+
+    def add_judgments_from_dicts(self, judgments_data: list[dict]) -> int:
+        """Add judgments from dict format (from subagent).
+
+        Args:
+            judgments_data: List of judgment dicts with product_id, relevance, reasoning.
+
+        Returns:
+            Number of unique products judged (deduplicates by product_id).
+        """
+        # Track which product IDs we're adding
+        product_ids_in_batch = set()
+
+        for j in judgments_data:
+            product_id = str(j["product_id"])
+            product_ids_in_batch.add(product_id)
+
+            judgment = AgentJudgment(
+                product_id=product_id,
+                relevance=j["relevance"],
+                reasoning=j["reasoning"],
+                confidence=j.get("confidence", 1.0),
+            )
+            self.add_judgment(judgment)
+
+        # Return count of unique products judged in this batch
+        return len(product_ids_in_batch)
 
     def judgment_counts_by_level(self) -> dict[int, int]:
         """Get count of judgments by relevance level."""
@@ -187,12 +252,11 @@ class AgentState:
         """Check if all plan steps are complete."""
         return self.plan_submitted and all(s.status == "complete" for s in self.plan)
 
-    def update_step_progress(self, offset: int, products_count: int) -> None:
-        """Update the current step's progress tracking."""
+    def update_step_progress(self, products_count: int) -> None:
+        """Update the current step's products processed count."""
         step = self.get_current_step()
         if step:
-            step.current_offset = offset
-            step.products_browsed += products_count
+            step.products_processed += products_count
 
     def format_plan_summary(self) -> str:
         """Format the plan for prompt injection."""
@@ -212,7 +276,7 @@ class AgentState:
             if step.status == "complete" and step.summary:
                 line += f"\n   Summary: {step.summary}"
             elif step.status == "in_progress":
-                line += f"\n   Progress: {step.products_browsed} products browsed (offset {step.current_offset})"
+                line += f"\n   Progress: {step.products_processed} products processed"
             lines.append(line)
 
         return "\n".join(lines)

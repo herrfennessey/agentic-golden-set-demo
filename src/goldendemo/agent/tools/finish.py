@@ -1,6 +1,7 @@
 """Finish judgments tool - signals completion and runs final validation."""
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,8 @@ from goldendemo.data.models import AgentJudgment, GoldenSetConfig, ProductReleva
 
 if TYPE_CHECKING:
     from goldendemo.agent.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 class FinishJudgmentsTool(BaseTool):
@@ -38,7 +41,11 @@ class FinishJudgmentsTool(BaseTool):
         return {
             "iteration_budget": IterationBudgetGuardrail(),
             "minimum_exploration": MinimumExplorationGuardrail(),
-            "score_distribution": ScoreDistributionGuardrail(),
+            "score_distribution": ScoreDistributionGuardrail(
+                min_exact=settings.min_exact_judgments,
+                min_partial=settings.min_partial_judgments,
+                min_total=settings.min_total_judgments,
+            ),
             "category_browsing": CategoryBrowsingGuardrail(),
         }
 
@@ -80,7 +87,7 @@ class FinishJudgmentsTool(BaseTool):
         state.final_reasoning = overall_reasoning
         state.record_tool_call(self.name)
 
-        # Run guardrails on accumulated judgments
+        # Run guardrails on judgments
         guardrail_failures: list[str] = []
         guardrail_warnings: list[str] = []
 
@@ -88,7 +95,7 @@ class FinishJudgmentsTool(BaseTool):
             if name == "iteration_budget":
                 result: GuardrailResult = guardrail.check(state, is_submission=True)
             else:
-                result = guardrail.check(state)
+                result = guardrail.check(state, judgments=state.judgments)
 
             if not result.passed:
                 guardrail_failures.append(f"[{name}] {result.message}")
@@ -107,7 +114,7 @@ class FinishJudgmentsTool(BaseTool):
                 },
             )
 
-        # Save the golden set
+        # Save the golden set (all judgments are Exact or Partial)
         try:
             self._save_golden_set(state, state.judgments, overall_reasoning)
         except Exception as e:
@@ -121,7 +128,7 @@ class FinishJudgmentsTool(BaseTool):
                 "by_level": counts,
                 "warnings": guardrail_warnings,
             },
-            message=f"Golden set saved with {len(state.judgments)} judgments (Exact: {counts.get(2, 0)}, Partial: {counts.get(1, 0)}, Irrelevant: {counts.get(0, 0)}).",
+            message=f"Golden set saved with {len(state.judgments)} judgments (Exact: {counts.get(2, 0)}, Partial: {counts.get(1, 0)}).",
         )
 
     def _save_golden_set(

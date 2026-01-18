@@ -54,6 +54,10 @@ run-agent:
 	@test -n "$(QUERY)" || (echo "Error: QUERY is required" && exit 1)
 	poetry run python scripts/run_agent.py "$(QUERY)"
 
+# Test that search is working
+test-search:
+	poetry run python scripts/check_search.py
+
 # Run Streamlit app
 run:
 	poetry run streamlit run app.py
