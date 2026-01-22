@@ -2,14 +2,14 @@
 
 An AI agent that autonomously generates search relevance golden sets, evaluated against the [WANDS dataset](https://github.com/wayfair/WANDS) (233K human judgments from Wayfair).
 
-## Quick Start (5 minutes)
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- [Poetry](https://python-poetry.org/docs/#installation)
 - Docker
 - OpenAI API key
+- Poetry
 
 ### Setup
 
@@ -23,8 +23,14 @@ make install
 cp .env.example .env
 # Edit .env: OPENAI_API_KEY=sk-...
 
-# Download data, start Weaviate, load products (~$0.50 for embeddings)
-make setup
+# Download WANDS dataset
+make download-wands
+
+# Start Weaviate (requires Docker)
+make weaviate-up
+
+# Load products into Weaviate (~$0.50 for embeddings)
+make load-data
 ```
 
 ### Run the Agent
@@ -45,6 +51,48 @@ make run
 # Open http://localhost:8501
 ```
 
+## Data Setup Details
+
+More details on each setup step:
+
+### 1. Download WANDS Dataset
+
+```bash
+make download-wands
+# Or: poetry run python scripts/download_wands.py
+```
+
+This downloads the WANDS dataset (~42K products, 480 queries, 233K judgments) to `data/wands/`.
+
+### 2. Start Weaviate
+
+```bash
+make weaviate-up
+# Or: docker compose up -d weaviate
+```
+
+Weaviate runs on `http://localhost:8080`. Check it's ready:
+
+```bash
+curl http://localhost:8080/v1/.well-known/ready
+```
+
+### 3. Load Products into Weaviate
+
+```bash
+make load-data
+# Or: poetry run python scripts/load_weaviate.py
+```
+
+This creates embeddings for all 42K products using OpenAI's embedding API (~$0.50 one-time cost) and loads them into Weaviate for hybrid search.
+
+### 4. Verify Search Works
+
+```bash
+make test-search
+# Or: poetry run python scripts/check_search.py
+```
+
 ## How It Works
 
 The agent uses a **two-phase execution model**:
@@ -53,29 +101,30 @@ The agent uses a **two-phase execution model**:
 ┌─────────────────────────────────────────────────────────────────┐
 │                    PHASE 1: DISCOVERY                           │
 │                                                                 │
-│  Agent explores the catalog and creates an exploration plan    │
+│  Agent explores the catalog and creates an execution plan       │
 │                                                                 │
-│  Tools: list_categories, search_products, submit_plan          │
+│  Tools: list_categories, search_products, submit_plan           │
+│  Output: Plan with search steps + category steps                │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    PHASE 2: EXECUTION                           │
 │                                                                 │
-│  Agent browses each planned category, judges products          │
+│  Search steps: Auto-execute, fetch full data, judge products    │
+│  Category steps: Browse entire category, judge products         │
 │                                                                 │
-│  Tools: browse_category, complete_step, finish_judgments       │
+│  Tools: browse_category, finish_judgments                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Discovery Phase**: The agent calls `list_categories()` and `search_products()` to understand what's in the catalog, then submits a plan of categories to explore.
+**Discovery Phase**: The agent calls `list_categories()` and `search_products()` to understand what's in the catalog. Discovery searches return slim data (no judgments) for fast exploration. The agent then submits a plan with both search steps and category steps.
 
-**Execution Phase**: For each category in the plan, the agent calls `browse_category()` which:
-1. Fetches all products in the category
-2. Runs a parallel judgment subagent to score each product (Exact=2, Partial=1)
-3. Saves judgments automatically
+**Execution Phase**:
+- **Search steps** execute automatically - they re-fetch products with full data and judge each one in parallel
+- **Category steps** require the agent to call `browse_category()`, which fetches all products and judges them in parallel
 
-When all categories are browsed, the agent calls `finish_judgments()` to save the golden set.
+When all steps are complete, the agent calls `finish_judgments()` to save the golden set.
 
 ## Project Structure
 
@@ -83,29 +132,33 @@ When all categories are browsed, the agent calls `finish_judgments()` to save th
 agentic-golden-set-demo/
 ├── src/goldendemo/
 │   ├── agent/
-│   │   ├── agent.py          # Main agent orchestrator (start here!)
+│   │   ├── agent.py          # Main orchestrator (start here!)
 │   │   ├── runtime.py        # OpenAI API calls, tool dispatch
 │   │   ├── judge.py          # Judgment subagent (parallel evaluation)
-│   │   ├── state.py          # AgentState tracking
+│   │   ├── state.py          # AgentState, PlanStep tracking
+│   │   ├── events.py         # Streaming event types
 │   │   ├── prompts.py        # System prompts for each phase
-│   │   ├── tools/            # Tool implementations
-│   │   │   ├── search.py     # search_products
+│   │   ├── utils.py          # Shared utilities
+│   │   ├── tools/
+│   │   │   ├── search.py     # search_products (discovery)
 │   │   │   ├── browse.py     # list_categories, browse_category
-│   │   │   ├── plan.py       # submit_plan
-│   │   │   ├── finish.py     # complete_step, finish_judgments
-│   │   │   └── base.py       # BaseTool, ToolResult
-│   │   └── guardrails/       # Validation rules
+│   │   │   ├── plan.py       # submit_plan, complete_step
+│   │   │   └── finish.py     # finish_judgments
+│   │   └── guardrails/       # Validation (iteration, exploration, distribution)
 │   ├── clients/
-│   │   └── weaviate_client.py  # Vector DB client
+│   │   └── weaviate_client.py  # Vector DB (hybrid search)
 │   ├── data/
 │   │   ├── models.py         # Pydantic models
 │   │   └── wands_loader.py   # Dataset loader
+│   ├── evaluation/
+│   │   └── comparator.py     # Compare agent vs ground truth
 │   └── config.py             # Settings from .env
 ├── scripts/
-│   ├── run_agent.py          # CLI to run agent on queries
-│   ├── load_weaviate.py      # Load products into vector DB
 │   ├── download_wands.py     # Download WANDS dataset
-│   └── check_search.py       # Test search is working
+│   ├── load_weaviate.py      # Load products into Weaviate
+│   ├── run_agent.py          # Run agent on queries
+│   ├── check_search.py       # Verify search works
+│   └── dashboard.py          # Evaluation dashboard
 ├── tests/                    # Unit tests
 ├── data/
 │   ├── wands/                # WANDS dataset (gitignored)
@@ -115,18 +168,42 @@ agentic-golden-set-demo/
 
 ## Configuration
 
-Environment variables (`.env`):
+All settings are configured via environment variables in `.env`:
+
+### Core Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | required | OpenAI API key |
-| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate URL |
-| `AGENT_MODEL` | `o3-mini` | Model for main agent |
+| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate server URL |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Model for Weaviate embeddings |
+
+### Agent Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_MODEL` | `gpt-5-nano` | Model for main agent |
 | `AGENT_REASONING_EFFORT` | `medium` | Reasoning effort (low/medium/high) |
-| `AGENT_MAX_ITERATIONS` | `30` | Max iterations before timeout |
-| `JUDGE_MODEL` | `gpt-4o-mini` | Model for judgment subagent |
-| `MIN_EXACT_JUDGMENTS` | `3` | Guardrail: minimum exact matches |
-| `MIN_PARTIAL_JUDGMENTS` | `5` | Guardrail: minimum partial matches |
+| `AGENT_REASONING_SUMMARY` | `true` | Enable reasoning summaries |
+| `AGENT_MAX_ITERATIONS` | `20` | Max iterations before timeout |
+
+### Judgment Subagent Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JUDGE_MODEL` | `gpt-5-nano` | Model for judging products |
+| `JUDGE_REASONING_EFFORT` | `low` | Reasoning effort (low recommended) |
+| `JUDGE_CHUNK_SIZE` | `25` | Products per judgment batch |
+| `JUDGE_MAX_WORKERS` | `5` | Parallel judgment workers |
+| `JUDGE_MAX_RETRIES` | `2` | Retry attempts on failure |
+
+### Quality Thresholds
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MIN_EXACT_JUDGMENTS` | `5` | Minimum Exact (2) judgments required |
+| `MIN_TOTAL_JUDGMENTS` | `50` | Minimum total judgments required |
+| `BROWSE_PRODUCT_LIMIT` | `2000` | Max products per category browse |
 
 ## Development
 
@@ -136,9 +213,6 @@ make test
 
 # Run tests excluding integration tests (no Weaviate needed)
 poetry run pytest -m "not integration"
-
-# Run a specific test
-poetry run pytest tests/test_agent_tools.py::test_search_tool -v
 
 # Lint and type check
 make lint
@@ -168,18 +242,17 @@ from goldendemo.clients.weaviate_client import WeaviateClient
 
 # Connect to Weaviate
 client = WeaviateClient()
-client.connect()
+with client.connect():
+    # Create agent
+    agent = GoldenSetAgent(client, max_iterations=20)
 
-# Create agent
-agent = GoldenSetAgent(client, max_iterations=20)
+    # Run with streaming events
+    for event in agent.run_streaming("blue velvet sofa"):
+        print(f"{event.type}: {event.data}")
 
-# Run with streaming events
-for event in agent.run_streaming("blue velvet sofa"):
-    print(f"{event.type}: {event.data}")
-
-# Or run blocking
-result = agent.run("blue velvet sofa")
-print(f"Found {len(result.products)} relevant products")
+    # Or run blocking
+    result = agent.run("blue velvet sofa")
+    print(f"Found {len(result.products)} relevant products")
 ```
 
 ## WANDS Dataset
@@ -194,10 +267,6 @@ The agent generates Exact (2) and Partial (1) judgments. Irrelevant products are
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Citation
-
-If you use this project or the WANDS dataset:
 
 ```bibtex
 @InProceedings{wands,

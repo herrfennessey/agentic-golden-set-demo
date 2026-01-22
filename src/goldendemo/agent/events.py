@@ -187,3 +187,26 @@ def plan_step_completed_event(
             "has_more_steps": has_more_steps,
         },
     )
+
+
+def search_step_event(
+    step_index: int,
+    query: str,
+    products_found: int,
+    judgments_added: int,
+    exact_count: int,
+    partial_count: int,
+) -> AgentEvent:
+    """Create an event indicating a search step executed and auto-completed."""
+    return AgentEvent(
+        type=EventType.PLAN_STEP_COMPLETED,
+        data={
+            "step_index": step_index,
+            "step_type": "search",
+            "query": query,
+            "products_found": products_found,
+            "judgments_added": judgments_added,
+            "exact_count": exact_count,
+            "partial_count": partial_count,
+        },
+    )

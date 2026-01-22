@@ -13,27 +13,25 @@ class ScoreDistributionGuardrail(Guardrail):
 
     Requires:
     - Minimum Exact judgments (ensures quality matches)
-    - Minimum Partial judgments (ensures boundary exploration)
     - Minimum total judgments
 
     Golden sets only contain Exact and Partial judgments.
+    Note: We don't require Partial judgments since some queries may not
+    have products that match the "right entity, wrong modifier" criteria.
     """
 
     def __init__(
         self,
         min_exact: int = 5,
-        min_partial: int = 3,
         min_total: int = 50,
     ):
         """Initialize the score distribution guardrail.
 
         Args:
             min_exact: Minimum Exact (2) judgments required.
-            min_partial: Minimum Partial (1) judgments required.
             min_total: Minimum total judgments required.
         """
         self.min_exact = min_exact
-        self.min_partial = min_partial
         self.min_total = min_total
 
     @property
@@ -51,21 +49,12 @@ class ScoreDistributionGuardrail(Guardrail):
                 action=GuardrailAction.BLOCK,
             )
 
-        # Count by level
-        counts = {1: 0, 2: 0}
-        for j in judgments:
-            counts[j.relevance] = counts.get(j.relevance, 0) + 1
+        # Count Exact judgments
+        exact_count = sum(1 for j in judgments if j.relevance == 2)
 
-        # Check minimum thresholds
-        failures = []
-        if counts[2] < self.min_exact:
-            failures.append(f"Need {self.min_exact} Exact, have {counts[2]}")
-        if counts[1] < self.min_partial:
-            failures.append(f"Need {self.min_partial} Partial, have {counts[1]}")
-
-        if failures:
+        if exact_count < self.min_exact:
             return GuardrailResult.failure(
-                f"Insufficient diversity: {'; '.join(failures)}. Continue exploring.",
+                f"Need {self.min_exact} Exact judgments, have {exact_count}. Continue exploring.",
                 action=GuardrailAction.BLOCK,
             )
 

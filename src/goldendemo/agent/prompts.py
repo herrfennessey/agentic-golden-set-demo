@@ -60,31 +60,55 @@ For the query: "{query}"
 
 You are in the DISCOVERY phase. Your goal is to understand the product catalog and create an execution plan.
 
-**IMPORTANT**: In this phase, you are NOT judging products yet. You are only identifying which categories to explore.
+### Why Discovery Searches Are Different
+
+Discovery searches return **slim data** (product ID, name, category, short description) - just enough to understand what's in the catalog without overwhelming context. NO judgments are made during discovery.
+
+During execution, your search steps will re-fetch products with **full data** (complete descriptions, attributes, category hierarchy) needed for accurate relevance judgment. This two-phase approach lets you explore broadly first, then judge thoroughly.
 
 ### Steps:
 1. **Call list_categories()** - See all product categories available
-2. **Run MULTIPLE diverse searches** - You must run at least 2 unique searches:
+2. **Run MULTIPLE diverse searches** - Explore the catalog with different query phrasings:
    - The exact query: "{query}"
    - Variations: synonyms, related terms, specific materials/attributes
    - Example: For "blue velvet sofa", also search "navy couch", "velvet loveseat", etc.
 3. **Analyze results** - Identify which categories contain relevant products
-4. **Call submit_plan()** - Submit your exploration plan
+4. **Call submit_plan()** - Submit your plan with BOTH search steps AND category steps
 
 ### CRITICAL: Multiple Searches Required
 - You MUST run at least 2 different search queries before submitting your plan
 - Duplicate searches (same query text) do NOT count - they will be rejected
 - Think about: synonyms, related styles, specific materials, alternative phrasings
+- Do NOT use singular/plural variations (e.g., "dinosaur" vs "dinosaurs") - they return identical results
 
-### Your Plan Should Include:
-- **PRIMARY categories** - Where exact matches definitely exist (from search results)
-- **RELATED categories** - Where partial matches or edge cases might exist
-- Order by relevance (most important categories first)
+### Your Plan MUST Include Both Types:
+
+**Search steps** (at least 1):
+- Capture products using different query phrasings/synonyms
+- Find products that might be in unexpected categories
+- Each search step will re-run with full product data for judgment
+
+**Category steps** (at least 2):
+- Systematically browse entire categories
+- Ensures complete coverage of primary product types
+- Use exact category names from list_categories()
+
+### Plan Format Example:
+```json
+{{
+  "steps": [
+    {{"type": "search", "query": "blue velvet couch", "reason": "Synonym - captures products listed as 'couch' not 'sofa'"}},
+    {{"type": "search", "query": "navy tufted sofa", "reason": "Color/style variation"}},
+    {{"type": "category", "category": "Sofas", "reason": "Primary category - 45 products found"}},
+    {{"type": "category", "category": "Loveseats", "reason": "Related seating - 12 products found"}}
+  ]
+}}
+```
 
 ### Tools Available:
-1. **list_categories()** - Get all product categories
-2. **search_products(query, limit)** - Hybrid search for products (run multiple times with different queries!)
-3. **submit_plan(steps)** - Submit your exploration plan
+1. **list_categories()** - Get all product categories with counts
+2. **search_products(query, limit)** - Explore products (slim data for planning)
+3. **submit_plan(steps)** - Submit plan (must have both search AND category steps)
 
 ---
 
@@ -106,7 +130,7 @@ For the query: "{query}"
 
 ## Phase 2: Execution
 
-You are executing your plan. Browse each category in your plan.
+You are executing your plan. Your plan contains search steps and category steps.
 
 ## Your Plan
 {plan_summary}
@@ -114,23 +138,27 @@ You are executing your plan. Browse each category in your plan.
 ## Current Step
 {current_step_info}
 
-### How It Works:
+### How Execution Works:
+
+**Search Steps (Auto-Execute)**:
+- Search steps execute AUTOMATICALLY without any action from you
+- They search, judge products, and auto-complete
+- You'll see them marked as complete in the plan summary
+
+**Category Steps (Auto-Complete)**:
 When you call **browse_category(product_class)**, it automatically:
 1. Fetches **ALL products** from the category at once
 2. **Judges each product's relevance** in parallel (Exact or Partial)
 3. **Saves all judgments** automatically
-4. Returns a summary with judgment counts for the entire category
+4. **Auto-completes the step** and advances to the next one
 
-You just need to:
-1. **Call browse_category(product_class)** for the current step's category
-2. **Wait for it to complete** (it processes the entire category)
-3. **Call complete_step(summary)** to mark the category done
-4. **Move to next category** or call finish_judgments() when all steps complete
+For category steps, you just need to:
+1. **Call browse_category(product_class)** for each category step
+2. **Call finish_judgments()** when all steps are complete
 
 ### Tools Available:
-1. **browse_category(product_class)** - Browse and auto-judge ALL products in category
-2. **complete_step(summary)** - Mark current step done, move to next
-3. **finish_judgments(overall_reasoning)** - Finalize when ALL steps are complete
+1. **browse_category(product_class)** - Browse, judge, and auto-complete category step
+2. **finish_judgments(overall_reasoning)** - Finalize when ALL steps are complete
 
 {scoring_guidelines}
 
@@ -140,7 +168,7 @@ You just need to:
 You are running autonomously with NO human interaction.
 - **ALWAYS respond with tool calls** - never return text-only responses
 - Make decisions independently - never ask for confirmation
-- Products are judged automatically - each browse_category call processes the entire category
+- All steps auto-complete after processing
 
 ## Current State
 {state_summary}
@@ -189,21 +217,27 @@ def format_execution_prompt(state: "AgentState") -> str:
 
 def _format_current_step(state: "AgentState") -> str:
     """Format current step information."""
+    from goldendemo.agent.state import StepType
+
     step = state.get_current_step()
     if not step:
         return "All steps complete! Call finish_judgments() to finalize."
 
-    lines = [
-        f"**Category**: {step.category}",
-        f"**Reason**: {step.reason}",
-        f"**Progress**: {step.products_processed} products processed",
-    ]
-
-    # Provide guidance on next action
-    if step.products_processed == 0:
-        lines.append(f'**Next action**: Call browse_category(product_class="{step.category}")')
+    # Format based on step type
+    if step.step_type == StepType.SEARCH:
+        lines = [
+            "**Type**: Search (auto-executing)",
+            f"**Query**: {step.target}",
+            f"**Reason**: {step.reason}",
+            "**Note**: Search steps execute automatically. Wait for completion.",
+        ]
     else:
-        lines.append('**Next action**: Call complete_step(summary="...") to move to next category')
+        lines = [
+            "**Type**: Category browse (auto-completes)",
+            f"**Category**: {step.target}",
+            f"**Reason**: {step.reason}",
+            f'**Next action**: Call browse_category(product_class="{step.target}")',
+        ]
 
     return "\n".join(lines)
 

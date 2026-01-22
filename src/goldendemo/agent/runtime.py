@@ -123,6 +123,7 @@ class ResponseRunner:
                 reasoning_config["summary"] = "auto"
                 include_params.append("reasoning.encrypted_content")
 
+            # Note: No max_output_tokens - truncation wastes money (pay for truncated + retry)
             response = self.openai_client.responses.create(
                 model=self.model,
                 input=input_items,
@@ -130,7 +131,6 @@ class ResponseRunner:
                 tool_choice="required",  # model must call a tool every turn
                 reasoning=reasoning_config,
                 include=include_params if include_params else None,
-                max_output_tokens=25000,
             )
 
             # Track token usage

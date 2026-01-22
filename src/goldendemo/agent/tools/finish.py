@@ -43,7 +43,6 @@ class FinishJudgmentsTool(BaseTool):
             "minimum_exploration": MinimumExplorationGuardrail(),
             "score_distribution": ScoreDistributionGuardrail(
                 min_exact=settings.min_exact_judgments,
-                min_partial=settings.min_partial_judgments,
                 min_total=settings.min_total_judgments,
             ),
             "category_browsing": CategoryBrowsingGuardrail(),

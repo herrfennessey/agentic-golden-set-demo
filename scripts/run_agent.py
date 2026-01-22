@@ -94,38 +94,52 @@ def main():
                     tool_name = event.data.get("tool_name", "")
                     if event.data.get("success"):
                         # Show useful summary based on tool type
+                        # Note: ToolResult.to_dict() returns {success, data, error, metadata}
+                        data = result.get("data", {})
+                        metadata = result.get("metadata", {})
                         if tool_name == "search_products":
-                            count = result.get("result_count", len(result.get("data", [])))
+                            count = metadata.get("result_count", len(data) if isinstance(data, list) else 0)
                             print(f"     ✅ Found {count} products")
                         elif tool_name == "browse_category":
-                            data = result.get("data", {})
-                            judgments_added = data.get("judgments_added", 0)
-                            count = result.get("result_count", 0)
-                            total = result.get("total_in_category", 0)
-                            print(f"     ✅ Judged all {total} products in parallel, added {judgments_added} judgments")
+                            judgments_added = data.get("judgments_added", 0) if isinstance(data, dict) else 0
+                            exact_count = data.get("exact_count", 0) if isinstance(data, dict) else 0
+                            partial_count = data.get("partial_count", 0) if isinstance(data, dict) else 0
+                            total = metadata.get("total_in_category", 0)
+                            print(
+                                f"     ✅ Judged all {total} products, added {judgments_added} (Exact: {exact_count}, Partial: {partial_count})"
+                            )
                         elif tool_name == "list_categories":
-                            count = result.get("total_categories", len(result.get("data", [])))
+                            count = metadata.get("total_categories", len(data) if isinstance(data, list) else 0)
                             print(f"     ✅ Found {count} categories")
                         elif tool_name == "get_product_details":
-                            found = result.get("found_count", len(result.get("data", [])))
-                            requested = result.get("requested_count", found)
+                            found = metadata.get("found_count", len(data) if isinstance(data, list) else 0)
+                            requested = metadata.get("requested_count", found)
                             print(f"     ✅ Retrieved {found}/{requested} product details")
                         elif tool_name == "submit_judgments":
-                            data = result.get("data", {})
-                            added = data.get("added", 0)
-                            total = data.get("total", 0)
-                            print(f"     ✅ Added {added} judgments (total: {total})")
+                            added = data.get("added", 0) if isinstance(data, dict) else 0
+                            total_j = data.get("total", 0) if isinstance(data, dict) else 0
+                            print(f"     ✅ Added {added} judgments (total: {total_j})")
                         elif tool_name == "finish_judgments":
-                            count = result.get("data", {}).get("judgments_count", 0)
+                            count = data.get("judgments_count", 0) if isinstance(data, dict) else 0
                             print(f"     ✅ Finished with {count} judgments")
                         elif tool_name == "submit_plan":
-                            data = result.get("data", {})
-                            steps = data.get("total_steps", 0)
-                            print(f"     ✅ Plan submitted with {steps} categories")
+                            search_steps = data.get("search_steps", 0) if isinstance(data, dict) else 0
+                            category_steps = data.get("category_steps", 0) if isinstance(data, dict) else 0
+                            print(
+                                f"     ✅ Plan submitted: 🔍 {search_steps} searches + 📂 {category_steps} categories"
+                            )
+                        elif tool_name == "search_step":
+                            query = metadata.get("query", "")
+                            products_found = metadata.get("products_found", 0)
+                            judgments_added = data.get("judgments_added", 0) if isinstance(data, dict) else 0
+                            exact_count = data.get("exact_count", 0) if isinstance(data, dict) else 0
+                            partial_count = data.get("partial_count", 0) if isinstance(data, dict) else 0
+                            print(
+                                f"     ✅ Searched '{query}': {products_found} products, added {judgments_added} (Exact: {exact_count}, Partial: {partial_count})"
+                            )
                         elif tool_name == "complete_step":
-                            data = result.get("data", {})
-                            completed = data.get("completed_step", "")
-                            progress = data.get("progress", "")
+                            completed = data.get("completed_step", "") if isinstance(data, dict) else ""
+                            progress = data.get("progress", "") if isinstance(data, dict) else ""
                             print(f"     ✅ Completed '{completed}' ({progress})")
                         else:
                             print("     ✅ Success")

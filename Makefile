@@ -66,9 +66,10 @@ run:
 dashboard:
 	poetry run streamlit run scripts/dashboard.py
 
-# Full setup: install, download data, start weaviate, load data
-setup: install download-wands weaviate-up
-	@echo "Waiting for Weaviate to start..."
-	sleep 10
-	$(MAKE) load-data
-	@echo "Setup complete! Run 'make run' to start the app."
+# Setup: install dependencies and download data (run weaviate-up and load-data separately)
+setup: install download-wands
+	@echo ""
+	@echo "Setup complete! Next steps:"
+	@echo "  1. make weaviate-up    # Start Weaviate (Docker)"
+	@echo "  2. make load-data      # Load products (~\$$0.50 for embeddings)"
+	@echo "  3. make run-agent QUERY='blue velvet sofa'"

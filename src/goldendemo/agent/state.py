@@ -1,9 +1,17 @@
 """Agent state management."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from goldendemo.data.models import AgentJudgment, CategoryInfo, ProductSummary
+
+
+class StepType(str, Enum):
+    """Type of plan step."""
+
+    SEARCH = "search"
+    CATEGORY = "category"
 
 
 @dataclass
@@ -76,11 +84,18 @@ class SearchRecord:
 class PlanStep:
     """A step in the agent's execution plan."""
 
-    category: str
+    step_type: StepType
+    target: str  # Query for SEARCH, category name for CATEGORY
     reason: str
     status: str = "pending"  # pending, in_progress, complete
     summary: str | None = None
     products_processed: int = 0
+    judgments_added: int = 0
+
+    @property
+    def category(self) -> str:
+        """Backward compatibility: return target for category steps."""
+        return self.target
 
 
 @dataclass
@@ -214,8 +229,25 @@ class AgentState:
     # Plan management methods
 
     def set_plan(self, steps: list[dict]) -> None:
-        """Set the execution plan from submitted steps."""
-        self.plan = [PlanStep(category=s["category"], reason=s["reason"]) for s in steps]
+        """Set the execution plan from submitted steps.
+
+        Steps are reordered so search steps execute first, then categories.
+        """
+        parsed = []
+        for s in steps:
+            step_type = StepType(s.get("type", "category"))
+            # Use 'query' for search steps, 'category' for category steps
+            if step_type == StepType.SEARCH:
+                target = s.get("query", "")
+            else:
+                target = s.get("category", "")
+            parsed.append(PlanStep(step_type=step_type, target=target, reason=s["reason"]))
+
+        # Reorder: search steps first, then categories
+        search_steps = [s for s in parsed if s.step_type == StepType.SEARCH]
+        category_steps = [s for s in parsed if s.step_type == StepType.CATEGORY]
+        self.plan = search_steps + category_steps
+
         self.plan_submitted = True
         self.current_step_index = 0
         if self.plan:
@@ -252,11 +284,17 @@ class AgentState:
         """Check if all plan steps are complete."""
         return self.plan_submitted and all(s.status == "complete" for s in self.plan)
 
-    def update_step_progress(self, products_count: int) -> None:
-        """Update the current step's products processed count."""
+    def update_step_progress(self, products_count: int, judgments_count: int = 0) -> None:
+        """Update the current step's progress counters.
+
+        Args:
+            products_count: Number of products processed to add.
+            judgments_count: Number of judgments added to add.
+        """
         step = self.get_current_step()
         if step:
             step.products_processed += products_count
+            step.judgments_added += judgments_count
 
     def format_plan_summary(self) -> str:
         """Format the plan for prompt injection."""
@@ -272,11 +310,17 @@ class AgentState:
             else:
                 marker = "⏳"
 
-            line = f'{marker} Step {i + 1}: Browse "{step.category}" - {step.reason}'
+            # Format step description based on type
+            if step.step_type == StepType.SEARCH:
+                action = f'Search "{step.target}"'
+            else:
+                action = f'Browse "{step.target}"'
+
+            line = f"{marker} Step {i + 1}: {action} - {step.reason}"
             if step.status == "complete" and step.summary:
                 line += f"\n   Summary: {step.summary}"
             elif step.status == "in_progress":
-                line += f"\n   Progress: {step.products_processed} products processed"
+                line += f"\n   Progress: {step.products_processed} products, {step.judgments_added} judgments"
             lines.append(line)
 
         return "\n".join(lines)

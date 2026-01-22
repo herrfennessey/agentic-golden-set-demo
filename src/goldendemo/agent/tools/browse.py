@@ -1,11 +1,11 @@
 """Browse category tools."""
 
 import logging
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from goldendemo.agent.tools.base import BaseTool, ToolResult
+from goldendemo.agent.utils import find_matching_category, parse_product_features
 from goldendemo.config import settings
 
 if TYPE_CHECKING:
@@ -13,68 +13,6 @@ if TYPE_CHECKING:
     from goldendemo.agent.state import AgentState
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_text(text: str) -> str:
-    """Normalize text for comparison - handle Unicode issues from LLM output."""
-    # Remove null bytes and control characters
-    text = "".join(c for c in text if ord(c) >= 32 or c in "\t\n")
-    # Normalize Unicode (NFC form)
-    text = unicodedata.normalize("NFC", text)
-    return text.strip()
-
-
-def _find_matching_category(query: str, categories: list) -> str | None:
-    """Find category matching the query, handling Unicode normalization."""
-    query_normalized = _normalize_text(query).lower()
-
-    # Try exact match first (normalized)
-    for cat in categories:
-        if _normalize_text(cat.product_class).lower() == query_normalized:
-            return str(cat.product_class)
-
-    # Try ASCII-only comparison (strip accents)
-    query_ascii = unicodedata.normalize("NFKD", query_normalized).encode("ascii", "ignore").decode()
-    for cat in categories:
-        cat_ascii = (
-            unicodedata.normalize("NFKD", _normalize_text(cat.product_class).lower()).encode("ascii", "ignore").decode()
-        )
-        if cat_ascii == query_ascii:
-            return str(cat.product_class)
-
-    return None
-
-
-def _parse_product_features(features: str) -> dict[str, list[str]]:
-    """Parse pipe-delimited features, grouping empty keys with previous key.
-
-    Handles multi-value attributes like:
-        dswoodtone : red wood| : barn brown| : cottonwood
-    Which becomes:
-        {"dswoodtone": ["red wood", "barn brown", "cottonwood"]}
-    """
-    result: dict[str, list[str]] = {}
-    current_key: str | None = None
-
-    if not features:
-        return result
-
-    for pair in features.split("|"):
-        if ":" not in pair:
-            continue
-        key, value = pair.split(":", 1)
-        key, value = key.strip(), value.strip()
-
-        if key:  # New key
-            current_key = key
-            if key not in result:
-                result[key] = []
-            if value:
-                result[key].append(value)
-        elif current_key and value:  # Empty key = append to previous
-            result[current_key].append(value)
-
-    return result
 
 
 class ListCategoriesTool(BaseTool):
@@ -189,21 +127,18 @@ class BrowseCategoryTool(BaseTool):
         product_class = product_class_input
 
         if state.available_classes:
-            matched = _find_matching_category(product_class_input, state.available_classes)
+            matched = find_matching_category(product_class_input, state.available_classes)
             if matched:
                 product_class = matched
 
-        # Check if this category was already browsed in the current step
-        current_step = state.get_current_step()
-        if current_step and current_step.products_processed > 0:
-            if current_step.category == product_class:
-                return ToolResult.ok(
-                    {"already_browsed": True},
-                    product_class=product_class,
-                    products_processed=current_step.products_processed,
-                    message=f"Already browsed '{product_class}' with {current_step.products_processed} products. "
-                    f"Call complete_step to move to the next category.",
-                )
+        # Check if this category was already browsed (step auto-completes now)
+        if product_class in state.browsed_categories:
+            return ToolResult.ok(
+                {"already_browsed": True},
+                product_class=product_class,
+                message=f"Category '{product_class}' was already browsed and auto-completed. "
+                f"Move to the next step or call finish_judgments().",
+            )
 
         try:
             # Fetch ALL products in category at once
@@ -244,7 +179,7 @@ class BrowseCategoryTool(BaseTool):
                     "category": p.product_class,
                     "category_hierarchy": p.category_hierarchy,
                     "description": p.product_description or "",
-                    "attributes": _parse_product_features(p.product_features),
+                    "attributes": parse_product_features(p.product_features),
                 }
                 for p in all_results
             ]
@@ -257,6 +192,8 @@ class BrowseCategoryTool(BaseTool):
 
             total_judgments_added = 0
             total_hallucinated = 0
+            batch_exact = 0
+            batch_partial = 0
 
             # Judge all chunks in parallel
             with ThreadPoolExecutor(max_workers=settings.judge_max_workers) as executor:
@@ -270,6 +207,12 @@ class BrowseCategoryTool(BaseTool):
                 for future in as_completed(futures):
                     try:
                         valid_judgments, hallucinated_count = future.result()
+                        # Count Exact (2) and Partial (1) in this batch before adding
+                        for j in valid_judgments:
+                            if j.get("relevance") == 2:
+                                batch_exact += 1
+                            elif j.get("relevance") == 1:
+                                batch_partial += 1
                         judgments_added = state.add_judgments_from_dicts(valid_judgments)
                         total_judgments_added += judgments_added
                         total_hallucinated += hallucinated_count
@@ -280,17 +223,41 @@ class BrowseCategoryTool(BaseTool):
             if total_hallucinated > 0:
                 logger.warning(f"Total hallucinated judgments across all chunks: {total_hallucinated}")
 
+            # Update step with judgments count
+            state.update_step_progress(products_count=0, judgments_count=total_judgments_added)
+
+            # Auto-complete the step
+            summary = (
+                f"Browsed {total_products} products, "
+                f"added {total_judgments_added} judgments (Exact: {batch_exact}, Partial: {batch_partial})"
+            )
+            has_more_steps = state.complete_current_step(summary)
+
+            # Determine next action message
+            if has_more_steps:
+                next_step = state.get_current_step()
+                if next_step:
+                    next_action = f"Next: {next_step.step_type.value} '{next_step.target}'"
+                else:
+                    next_action = "Call finish_judgments() to finalize."
+            else:
+                next_action = "All steps complete! Call finish_judgments() to finalize."
+
             # Return summary WITHOUT product data to keep context small
-            judgment_counts = state.judgment_counts_by_level()
             return ToolResult.ok(
-                {"judgments_added": total_judgments_added},
+                {
+                    "judgments_added": total_judgments_added,
+                    "exact_count": batch_exact,
+                    "partial_count": batch_partial,
+                    "step_completed": True,
+                },
                 product_class=product_class,
                 result_count=total_products,
                 total_in_category=total_products,
                 message=f"Browsed all {total_products} products in '{product_class}'. "
                 f"Added {total_judgments_added} judgments "
-                f"(Exact: {judgment_counts.get(2, 0)}, Partial: {judgment_counts.get(1, 0)}). "
-                f"Category complete.",
+                f"(Exact: {batch_exact}, Partial: {batch_partial}). "
+                f"Step auto-completed. {next_action}",
             )
 
         except Exception as e:

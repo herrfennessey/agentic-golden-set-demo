@@ -2,7 +2,9 @@
 
 from typing import TYPE_CHECKING, Any
 
+from goldendemo.agent.state import StepType
 from goldendemo.agent.tools.base import BaseTool, ToolResult
+from goldendemo.agent.utils import find_matching_category
 
 if TYPE_CHECKING:
     from goldendemo.agent.state import AgentState
@@ -18,9 +20,11 @@ class SubmitPlanTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Submit your exploration plan after running list_categories and search_products. "
-            "Include all categories you plan to browse, ordered by relevance (primary matches first). "
-            "Once submitted, you will execute each step sequentially."
+            "Submit your exploration plan with search and category steps. "
+            "REQUIRED: At least 1 search step AND at least 2 category steps. "
+            "Search steps execute first (auto-complete with judgments). "
+            "Category steps auto-complete after browse_category. "
+            "Max 10 total steps."
         )
 
     @property
@@ -30,20 +34,29 @@ class SubmitPlanTool(BaseTool):
             "properties": {
                 "steps": {
                     "type": "array",
-                    "description": "List of categories to explore, in order of relevance",
+                    "description": "List of search and category steps to execute",
                     "items": {
                         "type": "object",
                         "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["search", "category"],
+                                "description": "Step type: 'search' for query execution, 'category' for browsing",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "Search query (required if type=search)",
+                            },
                             "category": {
                                 "type": "string",
-                                "description": "Exact category name from list_categories",
+                                "description": "Exact category name from list_categories (required if type=category)",
                             },
                             "reason": {
                                 "type": "string",
-                                "description": "Why this category is relevant (e.g., 'Primary match - search returned 15 products')",
+                                "description": "Why this step is relevant",
                             },
                         },
-                        "required": ["category", "reason"],
+                        "required": ["type", "reason"],
                     },
                 },
             },
@@ -55,7 +68,7 @@ class SubmitPlanTool(BaseTool):
 
         Args:
             state: Current agent state.
-            steps: List of category steps to explore.
+            steps: List of search and category steps to execute.
 
         Returns:
             ToolResult confirming plan submission.
@@ -63,36 +76,97 @@ class SubmitPlanTool(BaseTool):
         steps = kwargs.get("steps", [])
 
         if not steps:
-            return ToolResult.fail("Plan must include at least one category to explore")
+            return ToolResult.fail("Plan must include at least one step")
+
+        if len(steps) > 10:
+            return ToolResult.fail(
+                f"Plan has {len(steps)} steps - maximum is 10. Focus on PRIMARY categories and key searches only."
+            )
 
         if state.plan_submitted:
             return ToolResult.fail("Plan already submitted. Use complete_step to progress.")
 
-        # Validate categories exist
-        if state.available_classes:
-            available_names = {c.product_class for c in state.available_classes}
-            invalid = [s["category"] for s in steps if s["category"] not in available_names]
-            if invalid:
-                return ToolResult.fail(
-                    f"Invalid categories: {invalid}. Use exact product_class names from list_categories."
-                )
+        # Validate step types and required fields
+        search_steps = []
+        category_steps = []
+        invalid_categories = []
 
-        # Set the plan in state
-        state.set_plan(steps)
+        for step in steps:
+            step_type = step.get("type", "category")
+
+            if step_type == "search":
+                if not step.get("query"):
+                    return ToolResult.fail("Search steps require a 'query' field")
+                search_steps.append(step)
+            elif step_type == "category":
+                category = step.get("category", "")
+                if not category:
+                    return ToolResult.fail("Category steps require a 'category' field")
+
+                # Validate and normalize category names
+                if state.available_classes:
+                    matched = find_matching_category(category, state.available_classes)
+                    if matched:
+                        step = {**step, "category": matched}
+                        category_steps.append(step)
+                    else:
+                        invalid_categories.append(category)
+                else:
+                    category_steps.append(step)
+            else:
+                return ToolResult.fail(f"Invalid step type: {step_type}. Use 'search' or 'category'.")
+
+        if invalid_categories:
+            return ToolResult.fail(
+                f"Invalid categories: {invalid_categories}. Use exact product_class names from list_categories."
+            )
+
+        # Validate plan has required mix of step types
+        if len(search_steps) < 1:
+            return ToolResult.fail(
+                "Plan must include at least 1 search step. "
+                "Search steps capture products using different query phrasings/synonyms."
+            )
+
+        if len(category_steps) < 2:
+            return ToolResult.fail(
+                f"Plan must include at least 2 category steps (found {len(category_steps)}). "
+                "Category steps ensure systematic coverage of primary product types."
+            )
+
+        # Combine validated steps (search first, then categories - reordering happens in set_plan)
+        validated_steps = search_steps + category_steps
+
+        # Set the plan in state (will reorder search steps first)
+        state.set_plan(validated_steps)
         state.record_tool_call(self.name)
+
+        # Format response showing the order
+        search_count = len(search_steps)
+        category_count = len(category_steps)
+        first_step = state.plan[0] if state.plan else None
+        first_step_desc = (
+            f'Search "{first_step.target}"'
+            if first_step and first_step.step_type.value == "search"
+            else f'Browse "{first_step.target}"'
+            if first_step
+            else "None"
+        )
 
         return ToolResult.ok(
             {
                 "status": "plan_submitted",
-                "total_steps": len(steps),
-                "steps": [{"category": s["category"], "reason": s["reason"]} for s in steps],
+                "total_steps": len(validated_steps),
+                "search_steps": search_count,
+                "category_steps": category_count,
+                "execution_order": "Search steps execute first (auto-complete), then category steps",
             },
-            message=f"Plan submitted with {len(steps)} steps. Starting with: {steps[0]['category']}",
+            message=f"Plan submitted with {search_count} search + {category_count} category steps. Starting with: {first_step_desc}",
         )
 
 
 class CompleteStepTool(BaseTool):
-    """Mark the current plan step as complete."""
+    """Manually complete a step (fallback - steps normally auto-complete)."""
 
     @property
     def name(self) -> str:
@@ -101,9 +175,9 @@ class CompleteStepTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Mark the current plan step as complete after exhausting all products in the category. "
-            "Call this when browse_category returns has_more=false. "
-            "Include a summary of what you found in this category."
+            "FALLBACK: Manually complete a step if auto-completion failed. "
+            "Normally you don't need this - browse_category auto-completes steps. "
+            "Only use if a step is stuck."
         )
 
     @property
@@ -113,14 +187,14 @@ class CompleteStepTool(BaseTool):
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "Brief summary of findings (e.g., 'Browsed 245 products, found 12 exact, 8 partial, 20 irrelevant')",
+                    "description": "Brief summary of findings",
                 },
             },
             "required": ["summary"],
         }
 
     def execute(self, state: "AgentState", **kwargs: Any) -> ToolResult:
-        """Execute step completion.
+        """Execute step completion (fallback).
 
         Args:
             state: Current agent state.
@@ -141,11 +215,10 @@ class CompleteStepTool(BaseTool):
         if not current_step:
             return ToolResult.fail("No current step to complete. Plan may already be finished.")
 
-        # Ensure the category was actually browsed before completing
-        if current_step.products_processed == 0:
+        # Search steps auto-complete - reject manual completion
+        if current_step.step_type == StepType.SEARCH:
             return ToolResult.fail(
-                f"Cannot complete step for '{current_step.category}' without browsing. "
-                f"Call browse_category(product_class='{current_step.category}') first."
+                f"Search steps auto-complete. The search for '{current_step.target}' will complete automatically."
             )
 
         # Complete the step and advance
@@ -156,20 +229,28 @@ class CompleteStepTool(BaseTool):
 
         if has_more_steps:
             next_step = state.get_current_step()
+            next_step_desc = (
+                f'Search "{next_step.target}"'
+                if next_step and next_step.step_type == StepType.SEARCH
+                else f'Browse "{next_step.target}"'
+                if next_step
+                else "None"
+            )
             return ToolResult.ok(
                 {
                     "status": "plan_step_completed",
-                    "completed_step": current_step.category,
-                    "next_step": next_step.category if next_step else None,
+                    "completed_step": current_step.target,
+                    "next_step": next_step.target if next_step else None,
+                    "next_step_type": next_step.step_type.value if next_step else None,
                     "progress": f"{completed_count}/{len(state.plan)} steps complete",
                 },
-                message=f"Completed '{current_step.category}'. Next: '{next_step.category if next_step else 'None'}'",
+                message=f"Manually completed '{current_step.target}'. Next: {next_step_desc}",
             )
         else:
             return ToolResult.ok(
                 {
                     "status": "plan_complete",
-                    "completed_step": current_step.category,
+                    "completed_step": current_step.target,
                     "progress": f"{completed_count}/{len(state.plan)} steps complete",
                     "ready_to_finish": True,
                 },

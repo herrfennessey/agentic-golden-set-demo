@@ -32,7 +32,7 @@ def get_collection_config() -> dict:
         "name": COLLECTION_NAME,
         "description": "WANDS (Wayfair) product catalog for search relevance evaluation",
         "vectorizer_config": Configure.Vectorizer.text2vec_openai(
-            model="text-embedding-3-small",
+            model=settings.openai_embedding_model,
             vectorize_collection_name=False,
         ),
         "properties": [

@@ -19,83 +19,48 @@ logger = logging.getLogger(__name__)
 
 
 # Judgment prompt for subagent
-JUDGMENT_PROMPT = """You are a product relevance judge for e-commerce search using WANDS methodology.
+JUDGMENT_PROMPT = """You are a product relevance judge for e-commerce search.
 
-## Your Task
 Query: "{query}"
 
-Judge each product below as **Exact (2)** or **Partial (1)**.
+## Your Job
+For each product, decide: Is this relevant to someone searching for "{query}"?
 
-## CRITICAL: You MUST respond with a tool call
-- **Your ONLY valid response is calling the submit_judgments tool**
-- **DO NOT return text** - only tool calls are accepted
+- **Exact (2)**: Product directly matches the query. A customer would say "yes, this is what I searched for."
+- **Partial (1)**: Product is related but not a direct match. A customer might say "not exactly what I wanted, but relevant."
+- **Skip**: Product has nothing to do with the query.
 
-## WANDS Scoring Methodology
+## CRITICAL: When in doubt, INCLUDE IT as Partial!
+- We want HIGH RECALL - it's better to include borderline products than miss relevant ones
+- If the product name, description, or attributes mention anything related to the query, it's at least Partial
+- Only skip products that are completely unrelated
 
-Every query has a **target entity** (the main product type) and **modifiers** (descriptive attributes).
+## Examples
 
-### Exact (2) - Fully matches query
-Product has BOTH the target entity AND all modifiers.
+Query: "dinosaur"
+- Exact: Dinosaur statue, Dinosaur wall art, Dinosaur bedding, T-Rex figurine
+- Partial: Prehistoric animal decor, Jurassic-themed rug, Dragon statue (related but not dinosaur)
+- Skip: Flower vase, Modern sofa, Kitchen utensils (nothing dinosaur-related)
 
-**Examples:**
-- Query: "modern sofa" → Modern sofa (has sofa + modern)
-- Query: "driftwood mirror" → Driftwood-framed mirror (has mirror + driftwood)
-- Query: "blue velvet chair" → Blue velvet chair (has chair + blue + velvet)
+Query: "blue velvet chair"
+- Exact: Blue velvet armchair, Navy velvet dining chair
+- Partial: Red velvet chair, Blue leather chair, Blue velvet sofa (related items)
+- Skip: Blue velvet curtains, Wooden table (not chairs)
 
-### Partial (1) - Matches target entity, missing/wrong modifiers
-Product has the TARGET ENTITY but does NOT satisfy all modifiers.
-
-**BE GENEROUS with Partial!** If it's the right product type but wrong style/color/material, it's Partial.
-
-**Examples:**
-- Query: "modern sofa" → Traditional sofa (has sofa ✓, missing modern ✗)
-- Query: "modern sofa" → Vintage sofa (has sofa ✓, wrong style ✗)
-- Query: "modern sofa" → Contemporary sofa (has sofa ✓, similar but not exact ✗)
-- Query: "blue velvet chair" → Red velvet chair (has chair ✓, wrong color ✗)
-- Query: "blue velvet chair" → Blue leather chair (has blue chair ✓, wrong material ✗)
-- Query: "driftwood mirror" → Oak mirror (has mirror ✓, wrong material ✗)
-- Query: "driftwood mirror" → Wall mirror (has mirror ✓, missing material ✗)
-- Query: "driftwood mirror" → Gold-framed mirror (has mirror ✓, wrong material ✗)
-
-### Skip - Missing target entity
-Product does NOT have the target entity.
-
-**Examples:**
-- Query: "modern sofa" → Modern table (no sofa, skip)
-- Query: "driftwood mirror" → Driftwood table (no mirror, skip)
-- Query: "blue velvet chair" → Blue velvet curtains (no chair, skip)
-
-## Decision Framework
-
-For EACH product:
-
-1. **Does it have the TARGET ENTITY from the query?**
-   - NO → Skip (do not include in judgments)
-   - YES → Continue
-
-2. **Does it match ALL modifiers exactly?**
-   - YES → Exact (2)
-   - NO → Partial (1)
-
-**Critical**: If a customer searching for "{query}" would recognize this as the same TYPE of product (even if wrong color/style/material), mark it Partial!
-
----
+Query: "driftwood mirror"
+- Exact: Driftwood-framed mirror, Coastal driftwood mirror
+- Partial: Any mirror (target entity), Driftwood shelf (driftwood item)
+- Skip: Driftwood table with no mirror component
 
 ## Products to Judge
 
 {products_list}
 
----
+## Response Format
 
-## CRITICAL: Tool-Only Operation
+Call submit_judgments with your judgments. Use the EXACT PRODUCT_ID shown for each product.
 
-You MUST respond with a tool call. DO NOT return text.
-
-**Call submit_judgments with judgments ONLY for products that are Exact or Partial. Skip unrelated products.**
-
-⚠️ IMPORTANT: Use the EXACT PRODUCT_ID shown for each product. Do NOT make up IDs, use sequential numbers, or use the product number (#1, #2, etc.). Copy the PRODUCT_ID field exactly as shown.
-
-If you return text instead of a tool call, the system will fail. You have ONE job: call the submit_judgments tool with your relevance judgments for relevant products only."""
+Remember: HIGH RECALL is the goal. Include anything that could reasonably be relevant."""
 
 
 def _format_products_for_judgment(products: list[dict]) -> str:
@@ -112,11 +77,7 @@ def _format_products_for_judgment(products: list[dict]) -> str:
         lines.append(f"Name: {p['product_name']}")
         lines.append(f"Category: {p.get('category', p.get('product_class', 'Unknown'))}")
         if p.get("description"):
-            desc = p["description"]
-            # Truncate long descriptions
-            if len(desc) > 200:
-                desc = desc[:200] + "..."
-            lines.append(f"Description: {desc}")
+            lines.append(f"Description: {p['description']}")
         if p.get("attributes"):
             attrs = p["attributes"]
             if attrs:
@@ -212,6 +173,9 @@ class JudgmentSubagent:
             return []
 
         logger.info(f"Subagent judging {len(products)} products for query '{query}'")
+        # Log product IDs being judged (helps debug which chunk fails)
+        product_ids = [p.get("product_id", "?")[:20] for p in products[:5]]  # First 5 IDs, truncated
+        logger.debug(f"Product IDs in chunk (first 5): {product_ids}...")
 
         # Retry if model doesn't call tool or payload is invalid
         max_attempts = settings.judge_max_retries
@@ -286,6 +250,7 @@ class JudgmentSubagent:
 
         # Subagent should ONLY call tools, no reasoning summaries allowed
         # Force the model to call the specific submit_judgments function
+        # Note: No max_output_tokens - truncation wastes money (pay for truncated + retry)
         response = self.openai_client.responses.create(
             model=self.model,
             input=[
@@ -298,7 +263,6 @@ class JudgmentSubagent:
             tools=self.tools,
             tool_choice={"type": "function", "name": "submit_judgments"},  # Force this specific tool
             reasoning={"effort": self.reasoning_effort},
-            max_output_tokens=settings.judge_max_output_tokens,
         )
 
         # Check response status for incomplete/truncated responses
@@ -314,10 +278,15 @@ class JudgmentSubagent:
         if state and hasattr(response, "usage") and response.usage:
             usage_dict = response.usage.model_dump() if hasattr(response.usage, "model_dump") else response.usage
             state.token_usage.add_usage(usage_dict)
-            logger.debug(
-                f"Subagent token usage: {usage_dict.get('total_tokens', 0)} "
-                f"(input: {usage_dict.get('input_tokens', 0)}, "
-                f"output: {usage_dict.get('output_tokens', 0)})"
+            # Log at WARNING level when response is incomplete to help debug truncation
+            log_level = logging.WARNING if is_incomplete else logging.DEBUG
+            output_details = usage_dict.get("output_tokens_details", {})
+            reasoning_tokens = output_details.get("reasoning_tokens", 0) if output_details else 0
+            logger.log(
+                log_level,
+                f"Subagent tokens: input={usage_dict.get('input_tokens', 0)}, "
+                f"output={usage_dict.get('output_tokens', 0)} (reasoning={reasoning_tokens}), "
+                f"status={response_status}",
             )
 
         # Extract judgments from tool call
@@ -373,9 +342,10 @@ class JudgmentSubagent:
                     break
 
                 except json.JSONDecodeError as e:
-                    # Tool was called but arguments are malformed JSON
+                    # Tool was called but arguments are malformed JSON (likely truncated)
                     logger.warning(f"Tool called but failed to parse JSON arguments: {e}")
-                    logger.debug(f"Invalid JSON arguments (first 500 chars): {str(raw_args)[:500]}")
+                    logger.warning(f"Raw arguments length: {len(str(raw_args))} chars (truncated at char {e.pos})")
+                    logger.warning(f"Truncated JSON ends with: ...{str(raw_args)[-100:]}")
                     tool_call_valid = False
                     break
                 except (TypeError, AttributeError) as e:

@@ -163,23 +163,9 @@ class TestScoreDistributionGuardrail:
         assert not result.passed
         assert "Too few judgments" in str(result.message) or "Need at least" in str(result.message)
 
-    def test_fails_with_only_exact_scores(self, empty_state: AgentState):
-        """Test that check fails when only Exact scores are present."""
-        guardrail = ScoreDistributionGuardrail(min_exact=5, min_partial=3, min_total=10)
-        # All Exact scores - missing Partial
-        empty_state.judgments = [
-            AgentJudgment(product_id=f"p{i}", relevance=2, reasoning="Test reasoning here") for i in range(10)
-        ]
-
-        result = guardrail.check(empty_state)
-
-        assert not result.passed
-        assert "Insufficient diversity" in str(result.message)
-        assert "Partial" in str(result.message)
-
     def test_fails_with_only_partial_scores(self, empty_state: AgentState):
-        """Test that check fails when only Partial scores are present."""
-        guardrail = ScoreDistributionGuardrail(min_exact=5, min_partial=3, min_total=10)
+        """Test that check fails when only Partial scores are present (no Exact)."""
+        guardrail = ScoreDistributionGuardrail(min_exact=5, min_total=10)
         empty_state.judgments = [
             AgentJudgment(product_id=f"p{i}", relevance=1, reasoning="Test reasoning here") for i in range(10)
         ]
@@ -187,12 +173,11 @@ class TestScoreDistributionGuardrail:
         result = guardrail.check(empty_state)
 
         assert not result.passed
-        assert "Insufficient diversity" in str(result.message)
+        assert "Exact" in str(result.message)
 
     def test_passes_with_exact_and_partial(self, empty_state: AgentState):
         """Test that check passes with Exact and Partial judgments."""
-        guardrail = ScoreDistributionGuardrail(min_exact=2, min_partial=3, min_total=5)
-        # Exact and Partial - should pass
+        guardrail = ScoreDistributionGuardrail(min_exact=2, min_total=5)
         empty_state.judgments = [
             AgentJudgment(product_id="p1", relevance=2, reasoning="Test reasoning here"),
             AgentJudgment(product_id="p2", relevance=2, reasoning="Test reasoning here"),
@@ -207,7 +192,7 @@ class TestScoreDistributionGuardrail:
 
     def test_passes_with_minimum_thresholds(self, empty_state: AgentState):
         """Test that check passes when minimum thresholds are met."""
-        guardrail = ScoreDistributionGuardrail(min_exact=2, min_partial=2, min_total=5)
+        guardrail = ScoreDistributionGuardrail(min_exact=2, min_total=5)
         empty_state.judgments = [
             AgentJudgment(product_id="p1", relevance=2, reasoning="Exact match"),
             AgentJudgment(product_id="p2", relevance=2, reasoning="Exact match"),
@@ -220,13 +205,13 @@ class TestScoreDistributionGuardrail:
 
         assert result.passed
 
-    def test_passes_with_skewed_distribution(self, empty_state: AgentState):
-        """Test that check passes with skewed distribution (many Exact, few Partial)."""
-        guardrail = ScoreDistributionGuardrail(min_exact=5, min_partial=3, min_total=10)
-        # Many Exact judgments, but still meets minimum thresholds for Partial
+    def test_passes_with_only_exact_scores(self, empty_state: AgentState):
+        """Test that check passes with only Exact scores (Partial not required)."""
+        guardrail = ScoreDistributionGuardrail(min_exact=5, min_total=10)
+        # All Exact scores - should pass since Partial is not required
         empty_state.judgments = [
-            AgentJudgment(product_id=f"exact_{i}", relevance=2, reasoning="Exact match") for i in range(100)
-        ] + [AgentJudgment(product_id=f"partial_{i}", relevance=1, reasoning="Partial match") for i in range(3)]
+            AgentJudgment(product_id=f"p{i}", relevance=2, reasoning="Test reasoning here") for i in range(10)
+        ]
 
         result = guardrail.check(empty_state)
 
