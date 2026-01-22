@@ -1,4 +1,4 @@
-.PHONY: install test lint format clean weaviate-up weaviate-down load-data run pre-commit
+.PHONY: install test lint format clean weaviate-up weaviate-down load-data run dashboard pre-commit
 
 # Install dependencies and pre-commit hooks
 install:
@@ -48,13 +48,28 @@ download-wands:
 load-data:
 	poetry run python scripts/load_weaviate.py
 
+# Run the agent on a query
+run-agent:
+	@echo "Usage: make run-agent QUERY='your search query'"
+	@test -n "$(QUERY)" || (echo "Error: QUERY is required" && exit 1)
+	poetry run python scripts/run_agent.py "$(QUERY)"
+
+# Test that search is working
+test-search:
+	poetry run python scripts/check_search.py
+
 # Run Streamlit app
 run:
 	poetry run streamlit run app.py
 
-# Full setup: install, download data, start weaviate, load data
-setup: install download-wands weaviate-up
-	@echo "Waiting for Weaviate to start..."
-	sleep 10
-	$(MAKE) load-data
-	@echo "Setup complete! Run 'make run' to start the app."
+# Run evaluation dashboard
+dashboard:
+	poetry run streamlit run scripts/dashboard.py
+
+# Setup: install dependencies and download data (run weaviate-up and load-data separately)
+setup: install download-wands
+	@echo ""
+	@echo "Setup complete! Next steps:"
+	@echo "  1. make weaviate-up    # Start Weaviate (Docker)"
+	@echo "  2. make load-data      # Load products (~\$$0.50 for embeddings)"
+	@echo "  3. make run-agent QUERY='blue velvet sofa'"

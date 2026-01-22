@@ -55,8 +55,34 @@ make run
 
 **Relevance Scale** (WANDS format):
 - `Exact (2)` - Product exactly matches query intent
-- `Partial (1)` - Product is somewhat relevant
-- `Irrelevant (0)` - Product does not match
+- `Partial (1)` - Product is somewhat relevant (contains query elements but not perfect match)
+
+## WANDS Relevance Annotation Guidelines
+
+The agent judges product relevance on a 2-level scale based on the WANDS dataset methodology. Only products judged as Exact or Partial are included in the golden set.
+
+### Exact Match (2)
+The surfaced product **fully matches** the search query. The product is exactly what the user is looking for.
+
+**Examples:**
+- Query: "modern sofa" → Modern sofa
+- Query: "driftwood mirror" → Driftwood-framed mirror
+- Query: "blue velvet chair" → Blue velvet chair
+
+### Partial Match (1)
+The surfaced product **does not fully match** the search query. It matches the target entity of the query, but does not satisfy all the modifiers for the query.
+
+**Key principle**: If the product contains elements from the query but isn't exactly what the user searched for, it's Partial.
+
+**Examples:**
+- Query: "modern sofa" → Traditional sofa (has sofa, wrong style)
+- Query: "blue velvet chair" → Red velvet chair (has velvet chair, wrong color)
+- Query: "driftwood mirror" → Mirror with driftwood finish in description (has both elements, not exact combination)
+- Query: "outdoor dining set" → Indoor dining set (has dining set, wrong context)
+
+**Critical guideline**: Be generous with Partial judgments. If a customer searching for X might find this product useful or relevant (even if it's not exactly X), mark it Partial.
+
+**Note**: Products that are completely unrelated to the query are simply not included in the golden set.
 
 ## Testing
 

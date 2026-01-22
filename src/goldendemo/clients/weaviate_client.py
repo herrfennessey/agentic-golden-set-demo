@@ -32,7 +32,7 @@ def get_collection_config() -> dict:
         "name": COLLECTION_NAME,
         "description": "WANDS (Wayfair) product catalog for search relevance evaluation",
         "vectorizer_config": Configure.Vectorizer.text2vec_openai(
-            model="text-embedding-3-small",
+            model=settings.openai_embedding_model,
             vectorize_collection_name=False,
         ),
         "properties": [
@@ -51,8 +51,8 @@ def get_collection_config() -> dict:
             ),
             Property(
                 name="product_class",
-                data_type=DataType.TEXT,
-                description="Product category class",
+                data_type=DataType.TEXT_ARRAY,
+                description="Product category classes (can belong to multiple)",
                 skip_vectorization=True,
                 tokenization=Tokenization.FIELD,
             ),
@@ -228,11 +228,14 @@ class WeaviateClient:
         inserted = 0
         with self.collection.batch.fixed_size(batch_size=batch_size) as batch:
             for product in products:
+                # Split pipe-delimited product_class into array
+                product_classes = product.product_class.split("|") if product.product_class else []
+
                 batch.add_object(
                     properties={
                         "product_id": product.product_id,
                         "product_name": product.product_name,
-                        "product_class": product.product_class,
+                        "product_class": product_classes,  # Now an array
                         "category_hierarchy": product.category_hierarchy,
                         "product_description": product.product_description,
                         "product_features": product.product_features,
@@ -272,15 +275,7 @@ class WeaviateClient:
             return_metadata=MetadataQuery(score=True),
         )
 
-        return [
-            ProductSummary.model_validate(
-                {
-                    **obj.properties,
-                    "description_snippet": str(obj.properties.get("product_description", "")),
-                }
-            )
-            for obj in results.objects
-        ]
+        return [ProductSummary.model_validate(obj.properties) for obj in results.objects]
 
     def get_by_class(self, product_class: str, limit: int = 100) -> list[ProductSummary]:
         """
@@ -294,19 +289,11 @@ class WeaviateClient:
             List of ProductSummary objects.
         """
         results = self.collection.query.fetch_objects(
-            filters=Filter.by_property("product_class").equal(product_class),
+            filters=Filter.by_property("product_class").contains_any([product_class]),
             limit=limit,
         )
 
-        return [
-            ProductSummary.model_validate(
-                {
-                    **obj.properties,
-                    "description_snippet": str(obj.properties.get("product_description", "")),
-                }
-            )
-            for obj in results.objects
-        ]
+        return [ProductSummary.model_validate(obj.properties) for obj in results.objects]
 
     def get_by_ids(self, product_ids: list[str], limit: int = 50) -> list[Product]:
         """
@@ -340,34 +327,42 @@ class WeaviateClient:
         """
         Get all unique product classes with counts.
 
+        Since product_class is now an array, we need to flatten and count each class.
+        A product with ["Accent Chairs", "Office Chairs"] counts for both classes.
+
         Returns:
-            List of CategoryInfo objects sorted by category hierarchy.
+            List of CategoryInfo objects sorted by product_class.
         """
-        # Build class-to-hierarchy map in a single pass to avoid N+1 queries
+        # Iterate through all products and count each class
+        class_counts: dict[str, int] = {}
         class_to_hierarchy: dict[str, str] = {}
+
         for obj in self.collection.iterator(return_properties=["product_class", "category_hierarchy"]):
-            product_class = str(obj.properties.get("product_class", ""))
-            if product_class and product_class not in class_to_hierarchy:
-                class_to_hierarchy[product_class] = str(obj.properties.get("category_hierarchy", ""))
+            # product_class is now an array
+            product_classes = obj.properties.get("product_class", [])
+            if not isinstance(product_classes, list):
+                product_classes = [product_classes] if product_classes else []
 
-        # Use aggregation to get counts per class
-        results = self.collection.aggregate.over_all(
-            group_by="product_class",
-            total_count=True,
-        )
+            category_hierarchy = str(obj.properties.get("category_hierarchy", ""))
 
+            # Count each class
+            for product_class in product_classes:
+                if product_class:
+                    product_class = str(product_class).strip()
+                    class_counts[product_class] = class_counts.get(product_class, 0) + 1
+                    # Store hierarchy for first occurrence
+                    if product_class not in class_to_hierarchy:
+                        class_to_hierarchy[product_class] = category_hierarchy
+
+        # Build CategoryInfo objects
         classes = []
-        for group in results.groups:
-            product_class = str(group.grouped_by.value)
-            count = group.total_count or 0
-            hierarchy = class_to_hierarchy.get(product_class, "")
-
+        for product_class, count in class_counts.items():
             classes.append(
                 CategoryInfo(
                     product_class=product_class,
-                    category_hierarchy=hierarchy,
+                    category_hierarchy=class_to_hierarchy.get(product_class, ""),
                     count=count,
                 )
             )
 
-        return sorted(classes, key=lambda x: x.category_hierarchy)
+        return sorted(classes, key=lambda x: x.product_class)

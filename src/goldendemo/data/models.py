@@ -1,10 +1,13 @@
 """
 Data models for the WANDS dataset and golden set generation.
 
-WANDS uses a 3-level relevance scale:
+WANDS ground truth uses a 3-level relevance scale:
 - Exact (2): Product is exactly what user wants
 - Partial (1): Product is somewhat relevant
 - Irrelevant (0): Product does not match user intent
+
+NOTE: The agent only generates Exact and Partial judgments.
+Irrelevant products are simply not included in the golden set.
 """
 
 from datetime import datetime
@@ -50,6 +53,14 @@ class Product(BaseModel):
     average_rating: float = 0.0
     review_count: int = 0
 
+    @field_validator("product_class", mode="before")
+    @classmethod
+    def convert_product_class(cls, v):
+        """Convert product_class from array to pipe-delimited string if needed."""
+        if isinstance(v, list):
+            return "|".join(v) if v else ""
+        return v or ""
+
     @property
     def categories(self) -> list[str]:
         """Parse category hierarchy into list."""
@@ -71,23 +82,38 @@ class Product(BaseModel):
 
     def to_summary(self) -> "ProductSummary":
         """Convert to summary for agent tools."""
+        # Split pipe-separated categories into list
+        categories = self.product_class.split("|") if self.product_class else []
         return ProductSummary(
             product_id=self.product_id,
             product_name=self.product_name,
-            product_class=self.product_class,
+            product_class=categories,
             category_hierarchy=self.category_hierarchy,
-            description_snippet=self.product_description[:200] if self.product_description else "",
+            product_description=self.product_description,
+            product_features=self.product_features,
         )
 
 
 class ProductSummary(BaseModel):
-    """Lightweight product summary for agent tool responses."""
+    """Product data for agent tool responses."""
 
     product_id: str
     product_name: str
-    product_class: str
+    product_class: list[str]  # Array of categories
     category_hierarchy: str
-    description_snippet: str = ""
+    product_description: str = ""
+    product_features: str = ""
+
+    @field_validator("product_class", mode="before")
+    @classmethod
+    def convert_product_class(cls, v):
+        """Convert product_class to list if needed."""
+        if isinstance(v, str):
+            # Split pipe-delimited string to array
+            return [c.strip() for c in v.split("|")] if v else []
+        elif isinstance(v, list):
+            return v
+        return []
 
 
 class Query(BaseModel):

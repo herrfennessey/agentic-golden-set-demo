@@ -3,8 +3,8 @@
 Quick script to test Weaviate search functionality.
 
 Usage:
-    poetry run python scripts/test_search.py
-    poetry run python scripts/test_search.py "your custom query"
+    poetry run python scripts/check_search.py
+    poetry run python scripts/check_search.py "your custom query"
 """
 
 import sys
@@ -45,8 +45,10 @@ def test_search(query: str, limit: int = 10) -> float:
             print(f"   Product Name: {product.product_name}")
             print(f"   Class: {product.product_class}")
             print(f"   Category: {product.category_hierarchy}")
-            if product.description_snippet:
-                snippet = product.description_snippet
+            if product.product_description:
+                # Truncate to first 100 chars for readability
+                desc = product.product_description
+                snippet = desc[:100] + "..." if len(desc) > 100 else desc
                 print(f"   Description: {snippet}")
 
         return elapsed_ms
