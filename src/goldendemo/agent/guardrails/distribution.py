@@ -38,7 +38,7 @@ class ScoreDistributionGuardrail(Guardrail):
     def name(self) -> str:
         return "score_distribution"
 
-    def check(self, state: "AgentState", **kwargs: Any) -> GuardrailResult:
+    def check(self, state: "AgentState", *, is_submission: bool = False, **kwargs: Any) -> GuardrailResult:
         """Check judgment quality and thresholds."""
         judgments = kwargs.get("judgments", state.judgments)
 

@@ -72,11 +72,12 @@ class MinimumExplorationGuardrail(Guardrail):
     def name(self) -> str:
         return "minimum_exploration"
 
-    def check(self, state: "AgentState", **kwargs: Any) -> GuardrailResult:
+    def check(self, state: "AgentState", *, is_submission: bool = False, **kwargs: Any) -> GuardrailResult:
         """Check exploration metrics.
 
         Args:
             state: Current agent state.
+            is_submission: Whether this check is for a final submission.
 
         Returns:
             GuardrailResult with pass/fail status and specific feedback.

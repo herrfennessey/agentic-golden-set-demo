@@ -241,7 +241,6 @@ class JudgmentSubagent:
         prompt = JUDGMENT_PROMPT.format(
             query=query,
             products_list=products_list,
-            product_count=len(products),
         )
 
         # Call OpenAI Responses API

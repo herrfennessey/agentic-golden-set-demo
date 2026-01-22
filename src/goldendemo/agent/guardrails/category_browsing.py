@@ -27,11 +27,12 @@ class CategoryBrowsingGuardrail(Guardrail):
     def name(self) -> str:
         return "category_browsing"
 
-    def check(self, state: "AgentState", **kwargs: Any) -> GuardrailResult:
+    def check(self, state: "AgentState", *, is_submission: bool = False, **kwargs: Any) -> GuardrailResult:
         """Check that categories were browsed before submission.
 
         Args:
             state: Current agent state.
+            is_submission: Whether this check is for a final submission.
 
         Returns:
             GuardrailResult with pass/fail status.

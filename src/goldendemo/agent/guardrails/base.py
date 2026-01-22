@@ -62,11 +62,18 @@ class Guardrail(ABC):
         ...
 
     @abstractmethod
-    def check(self, state: "AgentState", **kwargs: Any) -> GuardrailResult:
+    def check(
+        self,
+        state: "AgentState",
+        *,
+        is_submission: bool = False,
+        **kwargs: Any,
+    ) -> GuardrailResult:
         """Run the guardrail check.
 
         Args:
             state: Current agent state.
+            is_submission: Whether this check is for a final submission.
             **kwargs: Additional context-specific arguments.
 
         Returns:
