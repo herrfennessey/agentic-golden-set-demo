@@ -83,8 +83,14 @@ class SubmitPlanTool(BaseTool):
                 f"Plan has {len(steps)} steps - maximum is 10. Focus on PRIMARY categories and key searches only."
             )
 
-        if state.plan_submitted:
-            return ToolResult.fail("Plan already submitted. Use complete_step to progress.")
+        if state.plan_submitted and not state.is_plan_complete():
+            return ToolResult.fail("Plan already submitted and in progress. Use complete_step to progress.")
+
+        # If resubmitting after a complete plan, reset for new exploration
+        if state.plan_submitted and state.is_plan_complete():
+            state.plan = []
+            state.plan_submitted = False
+            state.current_step_index = 0
 
         # Validate step types and required fields
         search_steps = []

@@ -1,6 +1,24 @@
 # Agentic Golden Set Demo
 
-An AI agent that autonomously generates search relevance golden sets, evaluated against the [WANDS dataset](https://github.com/wayfair/WANDS) (233K human judgments from Wayfair).
+## Welcome
+
+Welcome to my demo! I created this to showcase how, with a python framework, and a frontier LLM model (gpt-5-nano),that
+we are able to generate high quality training data that took Wayfair hundreds of hours to create manually.
+
+This POC is meant to accompany a talk I'm giving in Berlin, and it is not production-ready. If you see any glaring
+issues, or weird malfunctions, please let me know by opening up a github issue, and I'd be happy to take a look!
+
+## Overview
+
+An AI agent that autonomously generates search relevance golden sets, evaluated against
+the [WANDS dataset](https://github.com/wayfair/WANDS) (233K human judgments from Wayfair).
+
+tl;dr we will:
+* Download the WANDS dataset (available for free on Wayfair's public GitHub repo)
+* Load products into a vector database (Weaviate) for fast hybrid search
+* Run the agent on a set of queries to generate golden sets
+* Compare the agent's results to the ground truth to evaluate the quality of the generated golden sets
+* Visualize the results in a Streamlit dashboard
 
 ## Quick Start
 
@@ -29,7 +47,7 @@ make download-wands
 # Start Weaviate (requires Docker)
 make weaviate-up
 
-# Load products into Weaviate (~$0.50 for embeddings)
+# Load products into Weaviate (with text-embedding-3-small, you can expect to pay ~$0.50 to embed the entire catalog)
 make load-data
 ```
 
@@ -37,10 +55,10 @@ make load-data
 
 ```bash
 # Run on a single query
-make run-agent QUERY="blue velvet sofa"
+make run-agent QUERY="leather dining chairs"
 
 # Or use the script directly for more options
-poetry run python scripts/run_agent.py "modern coffee table" --max-iterations 20
+poetry run python scripts/run_agent.py "podium with locking cabinet" --max-iterations 20
 ```
 
 ### View Results
@@ -84,7 +102,8 @@ make load-data
 # Or: poetry run python scripts/load_weaviate.py
 ```
 
-This creates embeddings for all 42K products using OpenAI's embedding API (~$0.50 one-time cost) and loads them into Weaviate for hybrid search.
+This creates embeddings for all 42K products using OpenAI's embedding API (~$0.50 one-time cost) and loads them into
+Weaviate for hybrid search.
 
 ### 4. Verify Search Works
 
@@ -118,11 +137,15 @@ The agent uses a **two-phase execution model**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Discovery Phase**: The agent calls `list_categories()` and `search_products()` to understand what's in the catalog. Discovery searches return slim data (no judgments) for fast exploration. The agent then submits a plan with both search steps and category steps.
+**Discovery Phase**: The agent calls `list_categories()` and `search_products()` to understand what's in the catalog.
+Discovery searches return slim data (no judgments) for fast exploration. The agent then submits a plan with both search
+steps and category steps.
 
 **Execution Phase**:
+
 - **Search steps** execute automatically - they re-fetch products with full data and judge each one in parallel
-- **Category steps** require the agent to call `browse_category()`, which fetches all products and judges them in parallel
+- **Category steps** require the agent to call `browse_category()`, which fetches all products and judges them in
+  parallel
 
 When all steps are complete, the agent calls `finish_judgments()` to save the golden set.
 
@@ -172,38 +195,38 @@ All settings are configured via environment variables in `.env`:
 
 ### Core Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | required | OpenAI API key |
-| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate server URL |
+| Variable                 | Default                  | Description                   |
+|--------------------------|--------------------------|-------------------------------|
+| `OPENAI_API_KEY`         | required                 | OpenAI API key                |
+| `WEAVIATE_URL`           | `http://localhost:8080`  | Weaviate server URL           |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Model for Weaviate embeddings |
 
 ### Agent Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AGENT_MODEL` | `gpt-5-nano` | Model for main agent |
-| `AGENT_REASONING_EFFORT` | `medium` | Reasoning effort (low/medium/high) |
-| `AGENT_REASONING_SUMMARY` | `true` | Enable reasoning summaries |
-| `AGENT_MAX_ITERATIONS` | `20` | Max iterations before timeout |
+| Variable                  | Default      | Description                        |
+|---------------------------|--------------|------------------------------------|
+| `AGENT_MODEL`             | `gpt-5-nano` | Model for main agent               |
+| `AGENT_REASONING_EFFORT`  | `medium`     | Reasoning effort (low/medium/high) |
+| `AGENT_REASONING_SUMMARY` | `true`       | Enable reasoning summaries         |
+| `AGENT_MAX_ITERATIONS`    | `20`         | Max iterations before timeout      |
 
 ### Judgment Subagent Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JUDGE_MODEL` | `gpt-5-nano` | Model for judging products |
-| `JUDGE_REASONING_EFFORT` | `low` | Reasoning effort (low recommended) |
-| `JUDGE_CHUNK_SIZE` | `25` | Products per judgment batch |
-| `JUDGE_MAX_WORKERS` | `5` | Parallel judgment workers |
-| `JUDGE_MAX_RETRIES` | `2` | Retry attempts on failure |
+| Variable                 | Default      | Description                        |
+|--------------------------|--------------|------------------------------------|
+| `JUDGE_MODEL`            | `gpt-5-nano` | Model for judging products         |
+| `JUDGE_REASONING_EFFORT` | `low`        | Reasoning effort (low recommended) |
+| `JUDGE_CHUNK_SIZE`       | `25`         | Products per judgment batch        |
+| `JUDGE_MAX_WORKERS`      | `5`          | Parallel judgment workers          |
+| `JUDGE_MAX_RETRIES`      | `2`          | Retry attempts on failure          |
 
 ### Quality Thresholds
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MIN_EXACT_JUDGMENTS` | `5` | Minimum Exact (2) judgments required |
-| `MIN_TOTAL_JUDGMENTS` | `50` | Minimum total judgments required |
-| `BROWSE_PRODUCT_LIMIT` | `2000` | Max products per category browse |
+| Variable               | Default | Description                          |
+|------------------------|---------|--------------------------------------|
+| `MIN_EXACT_JUDGMENTS`  | `5`     | Minimum Exact (2) judgments required |
+| `MIN_TOTAL_JUDGMENTS`  | `50`    | Minimum total judgments required     |
+| `BROWSE_PRODUCT_LIMIT` | `2000`  | Max products per category browse     |
 
 ## Development
 
@@ -226,13 +249,13 @@ make pre-commit
 
 ### Key Entry Points
 
-| If you want to... | Start here |
-|-------------------|------------|
+| If you want to...         | Start here                                            |
+|---------------------------|-------------------------------------------------------|
 | Understand the agent flow | `src/goldendemo/agent/agent.py` (read the docstring!) |
-| Modify tool behavior | `src/goldendemo/agent/tools/` |
-| Change prompts | `src/goldendemo/agent/prompts.py` |
-| Adjust guardrails | `src/goldendemo/agent/guardrails/` |
-| Debug tool dispatch | `src/goldendemo/agent/runtime.py` |
+| Modify tool behavior      | `src/goldendemo/agent/tools/`                         |
+| Change prompts            | `src/goldendemo/agent/prompts.py`                     |
+| Adjust guardrails         | `src/goldendemo/agent/guardrails/`                    |
+| Debug tool dispatch       | `src/goldendemo/agent/runtime.py`                     |
 
 ### Running the Agent Programmatically
 
@@ -247,17 +270,18 @@ with client.connect():
     agent = GoldenSetAgent(client, max_iterations=20)
 
     # Run with streaming events
-    for event in agent.run_streaming("blue velvet sofa"):
+    for event in agent.run_streaming("leather dining chairs"):
         print(f"{event.type}: {event.data}")
 
     # Or run blocking
-    result = agent.run("blue velvet sofa")
+    result = agent.run("leather dining chairs")
     print(f"Found {len(result.products)} relevant products")
 ```
 
 ## WANDS Dataset
 
 The [WANDS dataset](https://github.com/wayfair/WANDS) contains:
+
 - **42,994 products** from Wayfair's home goods catalog
 - **480 search queries** with relevance judgments
 - **233,448 human judgments** on a 3-level scale (Exact, Partial, Irrelevant)

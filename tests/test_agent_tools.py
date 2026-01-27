@@ -22,7 +22,7 @@ def mock_weaviate_client() -> MagicMock:
 @pytest.fixture
 def agent_state() -> AgentState:
     """Create an agent state for testing."""
-    return AgentState(query="blue sofa", query_id="q123")
+    return AgentState(query="leather dining chairs", query_id="q123")
 
 
 class TestSearchProductsTool:
@@ -45,23 +45,23 @@ class TestSearchProductsTool:
         mock_weaviate_client.hybrid_search.return_value = [
             ProductSummary(
                 product_id="p1",
-                product_name="Blue Velvet Sofa",
-                product_class="Sofas",
-                category_hierarchy="Furniture/Sofas",
-                product_description="A beautiful blue sofa",
-                product_features="Color:Blue|Material:Velvet",
+                product_name="Leather Dining Chair",
+                product_class="Dining Chairs",
+                category_hierarchy="Furniture/Dining Chairs",
+                product_description="A beautiful leather dining chair",
+                product_features="Color:Brown|Material:Leather",
             ),
         ]
         tool = SearchProductsTool(mock_weaviate_client)
 
-        result = tool.execute(agent_state, query="blue sofa", limit=10)
+        result = tool.execute(agent_state, query="leather dining chairs", limit=10)
 
         assert result.success
         assert len(result.data) == 1
         assert result.data[0]["product_id"] == "p1"
         assert result.metadata["result_count"] == 1
         mock_weaviate_client.hybrid_search.assert_called_once_with(
-            query="blue sofa",
+            query="leather dining chairs",
             limit=10,
             alpha=0.5,
         )

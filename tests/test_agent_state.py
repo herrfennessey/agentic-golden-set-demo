@@ -38,9 +38,9 @@ class TestAgentState:
 
     def test_initialization(self):
         """Test state initialization."""
-        state = AgentState(query="blue sofa", query_id="q123")
+        state = AgentState(query="leather dining chairs", query_id="q123")
 
-        assert state.query == "blue sofa"
+        assert state.query == "leather dining chairs"
         assert state.query_id == "q123"
         assert state.iteration == 0
         assert len(state.judgments) == 0
@@ -91,12 +91,12 @@ class TestAgentState:
         """Test recording search queries."""
         state = AgentState(query="test")
 
-        state.record_search("blue sofa", 25, alpha=0.5)
+        state.record_search("leather dining chairs", 25, alpha=0.5)
         state.record_search("velvet couch", 15, alpha=0.7)
 
         assert len(state.search_history) == 2
         assert state.exploration_metrics.search_queries_executed == 2
-        assert state.search_history[0].query == "blue sofa"
+        assert state.search_history[0].query == "leather dining chairs"
         assert state.search_history[0].result_count == 25
         assert state.search_history[1].alpha == 0.7
 
@@ -137,26 +137,54 @@ class TestAgentState:
         assert len(state.judgments) == 1
         assert state.judgments[0].product_id == "p1"
 
-    def test_add_judgment_replaces_existing(self):
-        """Test that adding judgment for same product replaces existing."""
+    def test_add_judgment_skips_already_judged(self):
+        """Test that adding judgment for same product is skipped."""
         state = AgentState(query="test")
+
+        # Add first judgment
         judgment1 = AgentJudgment(
             product_id="p1",
             relevance=2,
             reasoning="First reasoning",
         )
+        added = state.add_judgment(judgment1)
+        assert added is True
+        assert len(state.judgments) == 1
+        assert state.judgments[0].relevance == 2
+
+        # Try to add another judgment for same product - should be skipped
         judgment2 = AgentJudgment(
             product_id="p1",
             relevance=1,
-            reasoning="Updated reasoning",
+            reasoning="Second reasoning",
         )
-
-        state.add_judgment(judgment1)
-        state.add_judgment(judgment2)
-
+        added = state.add_judgment(judgment2)
+        assert added is False  # Skipped
         assert len(state.judgments) == 1
+        assert state.judgments[0].relevance == 2  # Original kept
+        assert state.judgments[0].reasoning == "First reasoning"
+
+    def test_update_judgment(self):
+        """Test that update_judgment can change relevance."""
+        state = AgentState(query="test")
+
+        # Add initial judgment
+        judgment = AgentJudgment(
+            product_id="p1",
+            relevance=2,
+            reasoning="Initially Exact",
+        )
+        state.add_judgment(judgment)
+
+        # Update to Partial (downgrade via validation)
+        updated = state.update_judgment("p1", new_relevance=1, new_reasoning="Validation: actually Partial")
+        assert updated is True
         assert state.judgments[0].relevance == 1
-        assert state.judgments[0].reasoning == "Updated reasoning"
+        assert state.judgments[0].reasoning == "Validation: actually Partial"
+
+        # Update non-existent product
+        updated = state.update_judgment("p999", new_relevance=2)
+        assert updated is False
 
     def test_clear_guardrail_feedback(self):
         """Test clearing guardrail feedback."""
@@ -169,7 +197,7 @@ class TestAgentState:
 
     def test_get_state_summary(self):
         """Test getting state summary."""
-        state = AgentState(query="blue sofa", max_iterations=20)
+        state = AgentState(query="leather dining chairs", max_iterations=20)
         state.iteration = 5
         state.exploration_metrics = ExplorationMetrics(
             unique_products_seen=30,
@@ -182,7 +210,7 @@ class TestAgentState:
 
         summary = state.get_state_summary()
 
-        assert summary["query"] == "blue sofa"
+        assert summary["query"] == "leather dining chairs"
         assert summary["iteration"] == 5
         assert summary["max_iterations"] == 20
         assert summary["products_seen"] == 30

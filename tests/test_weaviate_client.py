@@ -142,10 +142,10 @@ class TestWeaviateClientIntegration:
             products = [
                 Product(
                     product_id="test-1",
-                    product_name="Blue Velvet Sofa",
-                    product_class="Sofas",
-                    category_hierarchy="Furniture / Living Room / Sofas",
-                    product_description="A beautiful blue velvet sofa",
+                    product_name="Leather Dining Chair",
+                    product_class="Dining Chairs",
+                    category_hierarchy="Furniture / Dining Room / Dining Chairs",
+                    product_description="A beautiful leather dining chair",
                 ),
                 Product(
                     product_id="test-2",
@@ -174,7 +174,7 @@ class TestWeaviateClientIntegration:
 
             # Search in test collection
             results = test_collection.query.hybrid(
-                query="blue sofa",
+                query="leather dining chairs",
                 limit=10,
             )
             assert len(results.objects) > 0

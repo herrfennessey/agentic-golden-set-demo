@@ -46,7 +46,7 @@ class SearchProductsTool(BaseTool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query string (e.g., 'blue velvet sofa', 'wooden coffee table')",
+                    "description": "Search query string (e.g., 'leather dining chairs', 'wooden coffee table')",
                 },
                 "limit": {
                     "type": "integer",

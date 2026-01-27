@@ -101,13 +101,18 @@ def main():
                             count = metadata.get("result_count", len(data) if isinstance(data, list) else 0)
                             print(f"     ✅ Found {count} products")
                         elif tool_name == "browse_category":
-                            judgments_added = data.get("judgments_added", 0) if isinstance(data, dict) else 0
-                            exact_count = data.get("exact_count", 0) if isinstance(data, dict) else 0
-                            partial_count = data.get("partial_count", 0) if isinstance(data, dict) else 0
-                            total = metadata.get("total_in_category", 0)
-                            print(
-                                f"     ✅ Judged all {total} products, added {judgments_added} (Exact: {exact_count}, Partial: {partial_count})"
-                            )
+                            # Check if already browsed (re-browsing won't help)
+                            if isinstance(data, dict) and data.get("already_browsed"):
+                                category = metadata.get("product_class", "category")
+                                print(f"     ⏭️  Already browsed '{category}' - skipped (products already judged)")
+                            else:
+                                judgments_added = data.get("judgments_added", 0) if isinstance(data, dict) else 0
+                                exact_count = data.get("exact_count", 0) if isinstance(data, dict) else 0
+                                partial_count = data.get("partial_count", 0) if isinstance(data, dict) else 0
+                                total = metadata.get("total_in_category", 0)
+                                print(
+                                    f"     ✅ Judged all {total} products, added {judgments_added} (Exact: {exact_count}, Partial: {partial_count})"
+                                )
                         elif tool_name == "list_categories":
                             count = metadata.get("total_categories", len(data) if isinstance(data, list) else 0)
                             print(f"     ✅ Found {count} categories")
@@ -156,6 +161,53 @@ def main():
                 elif event.type.value == "guardrail_failure":
                     message = event.data.get("message", event.data.get("error", "Failure"))
                     print(f"  🚫 {message}")
+                elif event.type.value == "validation_phase":
+                    print("\n📋 Validation Phase")
+                    total_reviewed = event.data.get("total_reviewed", 0)
+                    total_removed = event.data.get("total_removed", 0)
+                    exact_removed = event.data.get("exact_removed", 0)
+                    partial_removed = event.data.get("partial_removed", 0)
+                    total_adjusted = event.data.get("total_adjusted", 0)
+                    upgrades = event.data.get("upgrades", 0)
+                    downgrades = event.data.get("downgrades", 0)
+                    exact_remaining = event.data.get("exact_remaining", 0)
+                    partial_remaining = event.data.get("partial_remaining", 0)
+
+                    print(f"  🔍 Reviewed {total_reviewed} judgments")
+
+                    # Show adjustments
+                    if total_adjusted > 0:
+                        print(f"  🔄 Adjusted {total_adjusted} (↑{upgrades} upgrades, ↓{downgrades} downgrades)")
+                        adjustment_details = event.data.get("adjustment_details", [])
+                        details_to_show = adjustment_details[:5] if len(adjustment_details) > 5 else adjustment_details
+                        for adj in details_to_show:
+                            old_rel = adj.get("old_relevance", 0)
+                            new_rel = adj.get("new_relevance", 0)
+                            old_label = "Exact" if old_rel == 2 else "Partial"
+                            new_label = "Exact" if new_rel == 2 else "Partial"
+                            reason = adj.get("reason", "")[:40]
+                            print(f"     • {adj.get('product_id', '?')}: {old_label}→{new_label} ({reason})")
+                        if len(adjustment_details) > 5:
+                            print(f"     • ... and {len(adjustment_details) - 5} more")
+
+                    # Show removals
+                    if total_removed > 0:
+                        print(f"  ❌ Removed {total_removed} (Exact: {exact_removed}, Partial: {partial_removed})")
+                        removal_details = event.data.get("removal_details", [])
+                        details_to_show = removal_details[:5] if len(removal_details) > 5 else removal_details
+                        for removal in details_to_show:
+                            relevance = removal.get("relevance", 0)
+                            label = "Exact" if relevance == 2 else "Partial"
+                            reason = removal.get("reason", "Unknown")[:40]
+                            print(f"     • {removal.get('product_id', '?')} ({label}): {reason}")
+                        if len(removal_details) > 5:
+                            print(f"     • ... and {len(removal_details) - 5} more")
+
+                    if total_adjusted == 0 and total_removed == 0:
+                        print("  ✅ All judgments verified correct")
+
+                    print(f"  📊 Final: {exact_remaining} Exact, {partial_remaining} Partial")
+
                 elif event.type.value == "completed":
                     print("-" * 50)
                     print(f"✅ Completed: {event.data['judgments_count']} judgments")

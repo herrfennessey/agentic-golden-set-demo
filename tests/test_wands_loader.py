@@ -18,7 +18,7 @@ def sample_data_dir(tmp_path: Path) -> Path:
     products_tsv = "\n".join(
         [
             "product_id\tproduct_name\tproduct_class\tcategory hierarchy\tproduct_description\tproduct_features\trating_count\taverage_rating\treview_count",
-            "1\tBlue Velvet Sofa\tSofas\tFurniture / Living Room / Sofas\tA beautiful blue velvet sofa\tColor:Blue|Material:Velvet\t100\t4.5\t50",
+            "1\tLeather Dining Chair\tDining Chairs\tFurniture / Dining Room / Dining Chairs\tA beautiful leather dining chair\tColor:Brown|Material:Leather\t100\t4.5\t50",
             "2\tLeather Sectional\tSectionals\tFurniture / Living Room / Sectionals\tModern leather sectional\tColor:Brown|Material:Leather\t200\t4.2\t80",
             "3\tWooden Coffee Table\tCoffee Tables\tFurniture / Living Room / Coffee Tables\tOak wood coffee table\tMaterial:Wood|Style:Modern\t150\t4.8\t75",
         ]
@@ -29,7 +29,7 @@ def sample_data_dir(tmp_path: Path) -> Path:
     queries_tsv = "\n".join(
         [
             "query_id\tquery\tquery_class",
-            "Q1\tblue sofa\tSofas",
+            "Q1\tleather dining chairs\tDining Chairs",
             "Q2\tcoffee table\tCoffee Tables",
         ]
     )
@@ -65,8 +65,8 @@ class TestWANDSLoader:
         product = loader.get_product("1")
         assert product is not None
         assert product.product_id == "1"
-        assert product.product_name == "Blue Velvet Sofa"
-        assert product.product_class == "Sofas"
+        assert product.product_name == "Leather Dining Chair"
+        assert product.product_class == "Dining Chairs"
 
     def test_get_product_not_found(self, loader: WANDSLoader):
         """Test getting a non-existent product."""
@@ -90,8 +90,8 @@ class TestWANDSLoader:
         query = loader.get_query("Q1")
         assert query is not None
         assert query.query_id == "Q1"
-        assert query.query == "blue sofa"
-        assert query.query_class == "Sofas"
+        assert query.query == "leather dining chairs"
+        assert query.query_class == "Dining Chairs"
 
     def test_get_all_queries(self, loader: WANDSLoader):
         """Test getting all queries."""
@@ -123,9 +123,9 @@ class TestWANDSLoader:
 
     def test_get_products_by_class(self, loader: WANDSLoader):
         """Test getting products by class."""
-        products = loader.get_products_by_class("Sofas")
+        products = loader.get_products_by_class("Dining Chairs")
         assert len(products) == 1
-        assert products[0].product_name == "Blue Velvet Sofa"
+        assert products[0].product_name == "Leather Dining Chair"
 
     def test_get_all_classes(self, loader: WANDSLoader):
         """Test getting all product classes."""
@@ -133,20 +133,20 @@ class TestWANDSLoader:
         assert len(classes) == 3
 
         class_names = [c.product_class for c in classes]
-        assert "Sofas" in class_names
+        assert "Dining Chairs" in class_names
         assert "Sectionals" in class_names
         assert "Coffee Tables" in class_names
 
     def test_get_queries_by_class(self, loader: WANDSLoader):
         """Test getting queries by class."""
-        queries = loader.get_queries_by_class("Sofas")
+        queries = loader.get_queries_by_class("Dining Chairs")
         assert len(queries) == 1
-        assert queries[0].query == "blue sofa"
+        assert queries[0].query == "leather dining chairs"
 
     def test_get_all_query_classes(self, loader: WANDSLoader):
         """Test getting all query classes."""
         classes = loader.get_all_query_classes()
-        assert "Sofas" in classes
+        assert "Dining Chairs" in classes
         assert "Coffee Tables" in classes
 
     def test_get_stats(self, loader: WANDSLoader):

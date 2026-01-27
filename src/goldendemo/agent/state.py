@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from goldendemo.data.models import AgentJudgment, CategoryInfo, ProductSummary
+from goldendemo.data.models import AgentJudgment, CategoryInfo, ProductSummary, RelevanceScore
 
 
 class StepType(str, Enum):
@@ -165,11 +165,58 @@ class AgentState:
         """Record a tool call."""
         self.tool_call_history.append(tool_name)
 
-    def add_judgment(self, judgment: AgentJudgment) -> None:
-        """Add a judgment, replacing any existing judgment for the same product."""
-        # Remove existing judgment for this product if any
-        self.judgments = [j for j in self.judgments if j.product_id != judgment.product_id]
+    def add_judgment(self, judgment: AgentJudgment) -> bool:
+        """Add a judgment for a new product. Skips if product already judged.
+
+        Args:
+            judgment: The judgment to add.
+
+        Returns:
+            True if judgment was added, False if product was already judged.
+        """
+        # Check if product already has a judgment - skip if so
+        existing = next((j for j in self.judgments if j.product_id == judgment.product_id), None)
+
+        if existing:
+            # Product already judged - skip (don't re-judge during exploration)
+            return False
+
+        # New product, add it
         self.judgments.append(judgment)
+        return True
+
+    def update_judgment(self, product_id: str, new_relevance: RelevanceScore, new_reasoning: str | None = None) -> bool:
+        """Update an existing judgment's relevance (used by validation phase).
+
+        Args:
+            product_id: Product to update.
+            new_relevance: New relevance score (0=Irrelevant, 1=Partial, 2=Exact).
+            new_reasoning: Optional new reasoning.
+
+        Returns:
+            True if judgment was updated, False if product not found.
+        """
+        for j in self.judgments:
+            if j.product_id == product_id:
+                j.relevance = new_relevance
+                if new_reasoning:
+                    j.reasoning = new_reasoning
+                return True
+        return False
+
+    def remove_judgments(self, product_ids: list[str]) -> int:
+        """Remove judgments by product ID.
+
+        Args:
+            product_ids: List of product IDs to remove.
+
+        Returns:
+            Number of judgments actually removed.
+        """
+        original_count = len(self.judgments)
+        ids_to_remove = set(product_ids)
+        self.judgments = [j for j in self.judgments if j.product_id not in ids_to_remove]
+        return original_count - len(self.judgments)
 
     def add_judgments_from_dicts(self, judgments_data: list[dict]) -> int:
         """Add judgments from dict format (from subagent).

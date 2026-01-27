@@ -30,10 +30,18 @@ For each product, decide: Is this relevant to someone searching for "{query}"?
 - **Partial (1)**: Product is related but not a direct match. A customer might say "not exactly what I wanted, but relevant."
 - **Skip**: Product has nothing to do with the query.
 
-## CRITICAL: When in doubt, INCLUDE IT as Partial!
+## CRITICAL Rules
+
+### Rule 1: When in doubt, INCLUDE IT as Partial!
 - We want HIGH RECALL - it's better to include borderline products than miss relevant ones
 - If the product name, description, or attributes mention anything related to the query, it's at least Partial
 - Only skip products that are completely unrelated
+
+### Rule 2: Measurements and sizes MUST match exactly for Exact!
+- If the query specifies a size/capacity (e.g., "7 qt", "5 ft", "queen size"), the product MUST have that exact measurement to be Exact
+- Wrong size = Partial at best (it's the right type of product, but wrong size)
+- Look carefully at product attributes for dimensions, capacity, and sizes
+- Common units: qt (quart), ft (feet), in (inch), gal (gallon), oz (ounce), lb (pound)
 
 ## Examples
 
@@ -42,15 +50,20 @@ Query: "dinosaur"
 - Partial: Prehistoric animal decor, Jurassic-themed rug, Dragon statue (related but not dinosaur)
 - Skip: Flower vase, Modern sofa, Kitchen utensils (nothing dinosaur-related)
 
-Query: "blue velvet chair"
-- Exact: Blue velvet armchair, Navy velvet dining chair
-- Partial: Red velvet chair, Blue leather chair, Blue velvet sofa (related items)
-- Skip: Blue velvet curtains, Wooden table (not chairs)
+Query: "leather dining chairs"
+- Exact: Leather dining chair set, Brown leather kitchen chairs
+- Partial: Fabric dining chairs, Leather bar stools, Leather office chair (related items)
+- Skip: Leather sofa, Wooden dining table (not dining chairs)
 
-Query: "driftwood mirror"
-- Exact: Driftwood-framed mirror, Coastal driftwood mirror
-- Partial: Any mirror (target entity), Driftwood shelf (driftwood item)
-- Skip: Driftwood table with no mirror component
+Query: "7 qt slow cooker"
+- Exact: 7-quart slow cooker, 7 qt programmable slow cooker
+- Partial: 6 qt slow cooker, 8 qt slow cooker (right product, wrong size), 7 qt Dutch oven (wrong product type)
+- Skip: Toaster, Blender, Microwave (unrelated appliances)
+
+Query: "5 ft christmas tree"
+- Exact: 5 foot artificial Christmas tree, 5' pre-lit pine tree
+- Partial: 4 ft Christmas tree, 6 ft Christmas tree (right product, wrong height), 5 ft garland (wrong product)
+- Skip: Christmas ornaments, Tree skirt (accessories, not trees)
 
 ## Products to Judge
 
@@ -60,7 +73,7 @@ Query: "driftwood mirror"
 
 Call submit_judgments with your judgments. Use the EXACT PRODUCT_ID shown for each product.
 
-Remember: HIGH RECALL is the goal. Include anything that could reasonably be relevant."""
+Remember: HIGH RECALL is the goal. Include anything that could reasonably be relevant, but respect exact size requirements for Exact matches."""
 
 
 def _format_products_for_judgment(products: list[dict]) -> str:

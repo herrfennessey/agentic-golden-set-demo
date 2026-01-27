@@ -67,7 +67,7 @@ The surfaced product **fully matches** the search query. The product is exactly 
 **Examples:**
 - Query: "modern sofa" → Modern sofa
 - Query: "driftwood mirror" → Driftwood-framed mirror
-- Query: "blue velvet chair" → Blue velvet chair
+- Query: "leather dining chairs" → Leather dining chair set
 
 ### Partial Match (1)
 The surfaced product **does not fully match** the search query. It matches the target entity of the query, but does not satisfy all the modifiers for the query.
@@ -76,7 +76,7 @@ The surfaced product **does not fully match** the search query. It matches the t
 
 **Examples:**
 - Query: "modern sofa" → Traditional sofa (has sofa, wrong style)
-- Query: "blue velvet chair" → Red velvet chair (has velvet chair, wrong color)
+- Query: "leather dining chairs" → Fabric dining chairs (has dining chairs, wrong material)
 - Query: "driftwood mirror" → Mirror with driftwood finish in description (has both elements, not exact combination)
 - Query: "outdoor dining set" → Indoor dining set (has dining set, wrong context)
 

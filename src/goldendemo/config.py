@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     judge_max_retries: int = 2  # Retry attempts on failure
     # Note: No max_output_tokens - letting it truncate wastes money (pay for truncated + retry)
 
+    # Validation subagent settings (reviews judgments before save)
+    validate_model: str = "gpt-5-nano"
+    validate_reasoning_effort: str = "medium"  # Higher than judge - needs to catch errors
+    validate_chunk_size: int = 20  # Smaller chunks for more careful review
+    validate_max_workers: int = 3  # Fewer parallel workers for reliability
+    validate_max_retries: int = 2
+
     # Category browsing limits
     browse_product_limit: int = 2000  # Max products to fetch per category
 

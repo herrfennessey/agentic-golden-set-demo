@@ -19,6 +19,7 @@ class EventType(str, Enum):
     GUARDRAIL_FAILURE = "guardrail_failure"
     JUDGMENT_ADDED = "judgment_added"
     PLAN_STEP_COMPLETED = "plan_step_completed"
+    VALIDATION_PHASE = "validation_phase"  # Validation phase showing removals
     COMPLETED = "completed"
     ERROR = "error"
 
@@ -208,5 +209,51 @@ def search_step_event(
             "judgments_added": judgments_added,
             "exact_count": exact_count,
             "partial_count": partial_count,
+        },
+    )
+
+
+def validation_phase_event(
+    total_reviewed: int,
+    total_removed: int,
+    exact_removed: int,
+    partial_removed: int,
+    exact_remaining: int,
+    partial_remaining: int,
+    removal_details: list[dict] | None = None,
+    total_adjusted: int = 0,
+    upgrades: int = 0,
+    downgrades: int = 0,
+    adjustment_details: list[dict] | None = None,
+) -> AgentEvent:
+    """Create an event for the validation phase showing changes made.
+
+    Args:
+        total_reviewed: Total judgments that were validated.
+        total_removed: Total judgments removed by validation.
+        exact_removed: Number of Exact (2) judgments removed.
+        partial_removed: Number of Partial (1) judgments removed.
+        exact_remaining: Exact judgments remaining after validation.
+        partial_remaining: Partial judgments remaining after validation.
+        removal_details: Optional list of {product_id, reason, relevance} for each removal.
+        total_adjusted: Number of judgments with relevance changed.
+        upgrades: Number upgraded (Partial→Exact).
+        downgrades: Number downgraded (Exact→Partial).
+        adjustment_details: Optional list of {product_id, old_relevance, new_relevance, reason}.
+    """
+    return AgentEvent(
+        type=EventType.VALIDATION_PHASE,
+        data={
+            "total_reviewed": total_reviewed,
+            "total_removed": total_removed,
+            "exact_removed": exact_removed,
+            "partial_removed": partial_removed,
+            "exact_remaining": exact_remaining,
+            "partial_remaining": partial_remaining,
+            "removal_details": removal_details or [],
+            "total_adjusted": total_adjusted,
+            "upgrades": upgrades,
+            "downgrades": downgrades,
+            "adjustment_details": adjustment_details or [],
         },
     )
