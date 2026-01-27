@@ -2,18 +2,22 @@
 
 ## Welcome
 
-Welcome to my demo! I created this to showcase how, with a python framework, and a frontier LLM model (gpt-5-nano),that
-we are able to generate high quality training data that took Wayfair hundreds of hours to create manually.
+Welcome to my demo! I created this to showcase how, using a Python framework and a frontier LLM model (gpt-5-nano), we
+can generate high quality training data that took Wayfair hundreds of hours to create manually.
 
 This POC is meant to accompany a talk I'm giving in Berlin, and it is not production-ready. If you see any glaring
 issues, or weird malfunctions, please let me know by opening up a github issue, and I'd be happy to take a look!
 
 ## Overview
 
-An AI agent that autonomously generates search relevance golden sets, evaluated against
-the [WANDS dataset](https://github.com/wayfair/WANDS) (233K human judgments from Wayfair).
+An AI agent that autonomously generates search relevance **golden sets** - curated lists of products with human-quality
+relevance judgments for a given search query. These are used to evaluate and improve search ranking algorithms.
+
+This project evaluates the agent against the [WANDS dataset](https://github.com/wayfair/WANDS) (233K human judgments
+from Wayfair).
 
 tl;dr we will:
+
 * Download the WANDS dataset (available for free on Wayfair's public GitHub repo)
 * Load products into a vector database (Weaviate) for fast hybrid search
 * Run the agent on a set of queries to generate golden sets
@@ -33,7 +37,7 @@ tl;dr we will:
 
 ```bash
 # Clone and install
-git clone https://github.com/your-username/agentic-golden-set-demo.git
+git clone https://github.com/herrfennessey/agentic-golden-set-demo.git
 cd agentic-golden-set-demo
 make install
 
@@ -65,56 +69,18 @@ poetry run python scripts/run_agent.py "podium with locking cabinet" --max-itera
 
 ```bash
 # Start the Streamlit dashboard
-make run
-# Open http://localhost:8501
+make dashboard
 ```
 
-## Data Setup Details
-
-More details on each setup step:
-
-### 1. Download WANDS Dataset
-
-```bash
-make download-wands
-# Or: poetry run python scripts/download_wands.py
-```
-
-This downloads the WANDS dataset (~42K products, 480 queries, 233K judgments) to `data/wands/`.
-
-### 2. Start Weaviate
-
-```bash
-make weaviate-up
-# Or: docker compose up -d weaviate
-```
-
-Weaviate runs on `http://localhost:8080`. Check it's ready:
-
-```bash
-curl http://localhost:8080/v1/.well-known/ready
-```
-
-### 3. Load Products into Weaviate
-
-```bash
-make load-data
-# Or: poetry run python scripts/load_weaviate.py
-```
-
-This creates embeddings for all 42K products using OpenAI's embedding API (~$0.50 one-time cost) and loads them into
-Weaviate for hybrid search.
-
-### 4. Verify Search Works
+### Verify Search Works
 
 ```bash
 make test-search
-# Or: poetry run python scripts/check_search.py
 ```
 
 ## How It Works
 
-The agent uses a **two-phase execution model**:
+The agent uses a **three-phase execution model**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -135,6 +101,16 @@ The agent uses a **two-phase execution model**:
 │                                                                 │
 │  Tools: browse_category, finish_judgments                       │
 └─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    PHASE 3: VALIDATION                          │
+│                                                                 │
+│  Separate subagent reviews ALL judgments with fresh context     │
+│  Can: KEEP correct, ADJUST scores, REMOVE incorrect products    │
+│                                                                 │
+│  Catches: Size mismatches, wrong relevance levels, hallucinations│
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Discovery Phase**: The agent calls `list_categories()` and `search_products()` to understand what's in the catalog.
@@ -147,47 +123,28 @@ steps and category steps.
 - **Category steps** require the agent to call `browse_category()`, which fetches all products and judges them in
   parallel
 
-When all steps are complete, the agent calls `finish_judgments()` to save the golden set.
+**Validation Phase**: When the agent calls `finish_judgments()`, a separate validation subagent reviews all judgments
+with fresh context. It can keep correct judgments, adjust relevance scores (upgrade Partial→Exact or downgrade
+Exact→Partial), or remove products that don't belong. This catches size/measurement mismatches, incorrect relevance
+levels, and hallucinated products before the golden set is saved.
 
-## Project Structure
+### Subagent Architecture
 
-```
-agentic-golden-set-demo/
-├── src/goldendemo/
-│   ├── agent/
-│   │   ├── agent.py          # Main orchestrator (start here!)
-│   │   ├── runtime.py        # OpenAI API calls, tool dispatch
-│   │   ├── judge.py          # Judgment subagent (parallel evaluation)
-│   │   ├── state.py          # AgentState, PlanStep tracking
-│   │   ├── events.py         # Streaming event types
-│   │   ├── prompts.py        # System prompts for each phase
-│   │   ├── utils.py          # Shared utilities
-│   │   ├── tools/
-│   │   │   ├── search.py     # search_products (discovery)
-│   │   │   ├── browse.py     # list_categories, browse_category
-│   │   │   ├── plan.py       # submit_plan, complete_step
-│   │   │   └── finish.py     # finish_judgments
-│   │   └── guardrails/       # Validation (iteration, exploration, distribution)
-│   ├── clients/
-│   │   └── weaviate_client.py  # Vector DB (hybrid search)
-│   ├── data/
-│   │   ├── models.py         # Pydantic models
-│   │   └── wands_loader.py   # Dataset loader
-│   ├── evaluation/
-│   │   └── comparator.py     # Compare agent vs ground truth
-│   └── config.py             # Settings from .env
-├── scripts/
-│   ├── download_wands.py     # Download WANDS dataset
-│   ├── load_weaviate.py      # Load products into Weaviate
-│   ├── run_agent.py          # Run agent on queries
-│   ├── check_search.py       # Verify search works
-│   └── dashboard.py          # Evaluation dashboard
-├── tests/                    # Unit tests
-├── data/
-│   ├── wands/                # WANDS dataset (gitignored)
-│   └── golden_sets/          # Generated golden sets
-└── app.py                    # Streamlit entry point
-```
+Both Execution and Validation phases use **isolated subagents** - lightweight LLM calls with fresh context (not part of
+the main agent's conversation). This keeps context windows small and enables parallel processing. Each subagent has its
+own configuration settings (model, reasoning effort, chunk size, workers, retries).
+
+### Relevance Scale (WANDS Methodology)
+
+The agent judges products on a 2-level scale:
+
+- **Exact (2)**: Product fully matches the query - exactly what the user is looking for
+- **Partial (1)**: Product is related but doesn't fully match (wrong size, color, style, etc.)
+
+Products that are completely unrelated are not included in the golden set.
+
+**Key principle**: Be generous with Partial judgments. If a customer searching for X might find the product useful
+(even if not exactly X), it's Partial.
 
 ## Configuration
 
@@ -203,14 +160,14 @@ All settings are configured via environment variables in `.env`:
 
 ### Agent Settings
 
-| Variable                  | Default      | Description                        |
-|---------------------------|--------------|------------------------------------|
-| `AGENT_MODEL`             | `gpt-5-nano` | Model for main agent               |
-| `AGENT_REASONING_EFFORT`  | `medium`     | Reasoning effort (low/medium/high) |
-| `AGENT_REASONING_SUMMARY` | `true`       | Enable reasoning summaries         |
-| `AGENT_MAX_ITERATIONS`    | `20`         | Max iterations before timeout      |
+| Variable                  | Default      | Description                                   |
+|---------------------------|--------------|-----------------------------------------------|
+| `AGENT_MODEL`             | `gpt-5-nano` | Model for main agent                          |
+| `AGENT_REASONING_EFFORT`  | `medium`     | Reasoning effort (low/medium/high)            |
+| `AGENT_REASONING_SUMMARY` | `true`       | Enable reasoning summaries                    |
+| `AGENT_MAX_ITERATIONS`    | `20`         | Max iterations before agentic flow errors out |
 
-### Judgment Subagent Settings
+### Judgment Subagent Settings (search / browse judgements)
 
 | Variable                 | Default      | Description                        |
 |--------------------------|--------------|------------------------------------|
@@ -220,32 +177,23 @@ All settings are configured via environment variables in `.env`:
 | `JUDGE_MAX_WORKERS`      | `5`          | Parallel judgment workers          |
 | `JUDGE_MAX_RETRIES`      | `2`          | Retry attempts on failure          |
 
+### Validation Subagent Settings
+
+| Variable                    | Default      | Description                              |
+|-----------------------------|--------------|------------------------------------------|
+| `VALIDATE_MODEL`            | `gpt-5-nano` | Model for validating judgments           |
+| `VALIDATE_REASONING_EFFORT` | `medium`     | Higher effort to catch errors            |
+| `VALIDATE_CHUNK_SIZE`       | `20`         | Judgments per validation batch           |
+| `VALIDATE_MAX_WORKERS`      | `3`          | Parallel validation workers              |
+| `VALIDATE_MAX_RETRIES`      | `2`          | Retry attempts on failure                |
+
 ### Quality Thresholds
 
 | Variable               | Default | Description                          |
 |------------------------|---------|--------------------------------------|
-| `MIN_EXACT_JUDGMENTS`  | `5`     | Minimum Exact (2) judgments required |
+| `MIN_EXACT_JUDGMENTS`  | `2`     | Minimum Exact (2) judgments required |
 | `MIN_TOTAL_JUDGMENTS`  | `50`    | Minimum total judgments required     |
 | `BROWSE_PRODUCT_LIMIT` | `2000`  | Max products per category browse     |
-
-## Development
-
-```bash
-# Run tests
-make test
-
-# Run tests excluding integration tests (no Weaviate needed)
-poetry run pytest -m "not integration"
-
-# Lint and type check
-make lint
-
-# Format code
-make format
-
-# Run pre-commit hooks
-make pre-commit
-```
 
 ### Key Entry Points
 
@@ -276,27 +224,4 @@ with client.connect():
     # Or run blocking
     result = agent.run("leather dining chairs")
     print(f"Found {len(result.products)} relevant products")
-```
-
-## WANDS Dataset
-
-The [WANDS dataset](https://github.com/wayfair/WANDS) contains:
-
-- **42,994 products** from Wayfair's home goods catalog
-- **480 search queries** with relevance judgments
-- **233,448 human judgments** on a 3-level scale (Exact, Partial, Irrelevant)
-
-The agent generates Exact (2) and Partial (1) judgments. Irrelevant products are not included in golden sets.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-```bibtex
-@InProceedings{wands,
-  title = {WANDS: Dataset for Product Search Relevance Assessment},
-  author = {Chen, Yan and Liu, Shujian and Liu, Zheng and Sun, Weiyi and Baltrunas, Linas and Schroeder, Benjamin},
-  booktitle = {Proceedings of the 44th European Conference on Information Retrieval},
-  year = {2022}
-}
 ```

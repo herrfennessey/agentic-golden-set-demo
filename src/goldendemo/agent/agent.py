@@ -1,9 +1,9 @@
 """Golden set generation agent.
 
-Architecture: Two-Phase Execution Model
-========================================
+Architecture: Three-Phase Execution Model
+=========================================
 
-This agent generates search relevance golden sets using a two-phase approach:
+This agent generates search relevance golden sets using a three-phase approach:
 
     ┌─────────────────────────────────────────────────────────────────┐
     │                    PHASE 1: DISCOVERY                           │
@@ -48,7 +48,27 @@ This agent generates search relevance golden sets using a two-phase approach:
     │    - Agent calls finish_judgments() when all steps done        │
     │                                                                 │
     │  Context: Resets at each step boundary (keeps context small)   │
-    │  Exits when: finish_judgments() passes all guardrails          │
+    │  Exits when: finish_judgments() is called                      │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 3: VALIDATION                          │
+    │                                                                 │
+    │  Goal: Review all judgments with fresh context before saving   │
+    │                                                                 │
+    │  Separate subagent (ValidationSubagent) reviews judgments:     │
+    │    - KEEP: Correct judgments stay unchanged                    │
+    │    - ADJUST: Fix relevance scores (Partial↔Exact)              │
+    │    - REMOVE: Delete products that don't belong                 │
+    │                                                                 │
+    │  Catches:                                                       │
+    │    - Size/measurement mismatches (e.g., wrong qt, wrong ft)    │
+    │    - Incorrect relevance levels                                │
+    │    - Hallucinated or unrelated products                        │
+    │                                                                 │
+    │  Triggered by: finish_judgments() tool                         │
+    │  Exits when: Validation complete, golden set saved             │
     └─────────────────────────────────────────────────────────────────┘
 
 Key Design: Discovery vs Execution Data
@@ -61,6 +81,7 @@ Key Components:
 - GoldenSetAgent: Main orchestrator (this file)
 - ResponseRunner: Handles OpenAI API calls and tool dispatch (runtime.py)
 - JudgmentSubagent: Evaluates product relevance in parallel (judge.py)
+- ValidationSubagent: Reviews judgments before save (validator.py)
 - AgentState: Tracks iteration, judgments, plan progress (state.py)
 - Guardrails: Enforce exploration/distribution requirements (guardrails/)
 

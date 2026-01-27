@@ -53,6 +53,24 @@ make run
 - `src/goldendemo/data/wands_loader.py` - Loads WANDS TSV files (note: files use tab delimiter despite .csv extension)
 - `src/goldendemo/clients/weaviate_client.py` - Hybrid search (vector + BM25) over products
 
+### Three-Phase Agent Architecture
+
+The agent in `src/goldendemo/agent/agent.py` uses three phases:
+
+1. **Discovery Phase** - Agent explores catalog with `list_categories()` and `search_products()` (slim data), then calls `submit_plan()` with search + category steps
+
+2. **Execution Phase** - Search steps auto-execute; category steps use `browse_category()`. Both use the **JudgmentSubagent** (`judge.py`) to evaluate products in parallel with fresh context
+
+3. **Validation Phase** - When `finish_judgments()` is called, the **ValidationSubagent** (`validator.py`) reviews all judgments with fresh context. Can KEEP, ADJUST scores, or REMOVE products
+
+**Subagent Pattern**: Both JudgmentSubagent and ValidationSubagent are isolated LLM calls with fresh context (not part of main conversation). Each has separate config settings (`JUDGE_*` and `VALIDATE_*` env vars).
+
+**Key Entry Points**:
+- `agent.py` - Main orchestrator (start here, read the docstring)
+- `runtime.py` - OpenAI API calls and tool dispatch
+- `tools/` - Tool implementations (search, browse, plan, finish)
+- `guardrails/` - Validation rules (iteration limits, exploration requirements)
+
 **Relevance Scale** (WANDS format):
 - `Exact (2)` - Product exactly matches query intent
 - `Partial (1)` - Product is somewhat relevant (contains query elements but not perfect match)

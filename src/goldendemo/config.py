@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     browse_product_limit: int = 2000  # Max products to fetch per category
 
     # Golden set composition thresholds
-    min_exact_judgments: int = 5  # Minimum Exact (2) judgments required
+    min_exact_judgments: int = 2  # Minimum Exact (2) judgments required
     min_total_judgments: int = 50  # Minimum total judgments required
 
 
