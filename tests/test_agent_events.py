@@ -67,10 +67,10 @@ class TestEventFactories:
 
     def test_started_event(self):
         """Test started event creation."""
-        event = started_event("blue sofa", "q123")
+        event = started_event("leather dining chairs", "q123")
 
         assert event.type == EventType.STARTED
-        assert event.data["query"] == "blue sofa"
+        assert event.data["query"] == "leather dining chairs"
         assert event.data["query_id"] == "q123"
 
     def test_iteration_start_event(self):

@@ -25,8 +25,12 @@ def get_wands_loader() -> WANDSLoader:
     return WANDSLoader(settings.wands_dir)
 
 
+# Cache version - increment when ComparisonResult schema changes
+_CACHE_VERSION = 2
+
+
 @st.cache_data
-def get_comparison(filepath: str) -> ComparisonResult:
+def get_comparison(filepath: str, _version: int = _CACHE_VERSION) -> ComparisonResult:
     """Load and compare a golden set (cached)."""
     loader = get_wands_loader()
     golden_set = load_golden_set(Path(filepath))
@@ -128,6 +132,54 @@ def render_score_distribution(result: ComparisonResult) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def render_agreement_breakdown(result: ComparisonResult) -> None:
+    """Render agreement breakdown for overlapping products."""
+    if not result.both_relevant:
+        st.info("No overlapping products to analyze.")
+        return
+
+    # Create a horizontal stacked bar showing agreement types
+    fig = go.Figure()
+
+    categories = [
+        ("Exact Match", len(result.exact_agreement), "#51cf66"),
+        ("Partial Match", len(result.partial_agreement), "#94d82d"),
+        ("Agent Upgraded", len(result.agent_upgraded), "#fcc419"),
+        ("Agent Downgraded", len(result.agent_downgraded), "#ff8787"),
+    ]
+
+    for name, count, color in categories:
+        fig.add_trace(
+            go.Bar(
+                y=["Agreement"],
+                x=[count],
+                name=f"{name} ({count})",
+                orientation="h",
+                marker_color=color,
+                text=[count] if count > 0 else None,
+                textposition="inside",
+            )
+        )
+
+    fig.update_layout(
+        barmode="stack",
+        height=120,
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        xaxis_title="Number of Products",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Show legend explanation
+    st.caption(
+        "**Exact Match**: Both said Exact (2) · "
+        "**Partial Match**: Both said Partial (1) · "
+        "**Agent Upgraded**: Agent=Exact, WANDS=Partial · "
+        "**Agent Downgraded**: Agent=Partial, WANDS=Exact"
+    )
+
+
 def render_product_table(
     product_ids: set[str],
     result: ComparisonResult,
@@ -196,19 +248,25 @@ def main() -> None:
         st.warning("Could not find matching WANDS query - comparison limited to agent data only")
 
     # Metrics row
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("WANDS Relevant", len(result.wands_relevant))
     with col2:
         st.metric("Agent Relevant", len(result.agent_relevant))
     with col3:
-        st.metric("Both Agree", len(result.both_relevant))
+        st.metric("Both Found", len(result.both_relevant))
     with col4:
         st.metric("Coverage", f"{result.agent_coverage:.1%}")
+    with col5:
+        st.metric("Score Agreement", f"{result.score_agreement_rate:.1%}")
 
     # Overlap visualization
     st.subheader("Overlap Summary")
     render_overlap_chart(result)
+
+    # Agreement breakdown for overlapping products
+    st.subheader("Score Agreement (Overlapping Products)")
+    render_agreement_breakdown(result)
 
     # Score distribution
     st.subheader("Score Distribution")

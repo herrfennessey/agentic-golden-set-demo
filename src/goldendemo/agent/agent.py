@@ -1,9 +1,9 @@
 """Golden set generation agent.
 
-Architecture: Two-Phase Execution Model
-========================================
+Architecture: Three-Phase Execution Model
+=========================================
 
-This agent generates search relevance golden sets using a two-phase approach:
+This agent generates search relevance golden sets using a three-phase approach:
 
     ┌─────────────────────────────────────────────────────────────────┐
     │                    PHASE 1: DISCOVERY                           │
@@ -48,7 +48,27 @@ This agent generates search relevance golden sets using a two-phase approach:
     │    - Agent calls finish_judgments() when all steps done        │
     │                                                                 │
     │  Context: Resets at each step boundary (keeps context small)   │
-    │  Exits when: finish_judgments() passes all guardrails          │
+    │  Exits when: finish_judgments() is called                      │
+    └─────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    PHASE 3: VALIDATION                          │
+    │                                                                 │
+    │  Goal: Review all judgments with fresh context before saving   │
+    │                                                                 │
+    │  Separate subagent (ValidationSubagent) reviews judgments:     │
+    │    - KEEP: Correct judgments stay unchanged                    │
+    │    - ADJUST: Fix relevance scores (Partial↔Exact)              │
+    │    - REMOVE: Delete products that don't belong                 │
+    │                                                                 │
+    │  Catches:                                                       │
+    │    - Size/measurement mismatches (e.g., wrong qt, wrong ft)    │
+    │    - Incorrect relevance levels                                │
+    │    - Hallucinated or unrelated products                        │
+    │                                                                 │
+    │  Triggered by: finish_judgments() tool                         │
+    │  Exits when: Validation complete, golden set saved             │
     └─────────────────────────────────────────────────────────────────┘
 
 Key Design: Discovery vs Execution Data
@@ -61,6 +81,7 @@ Key Components:
 - GoldenSetAgent: Main orchestrator (this file)
 - ResponseRunner: Handles OpenAI API calls and tool dispatch (runtime.py)
 - JudgmentSubagent: Evaluates product relevance in parallel (judge.py)
+- ValidationSubagent: Reviews judgments before save (validator.py)
 - AgentState: Tracks iteration, judgments, plan progress (state.py)
 - Guardrails: Enforce exploration/distribution requirements (guardrails/)
 
@@ -93,6 +114,7 @@ from goldendemo.agent.events import (
     plan_step_completed_event,
     search_step_event,
     started_event,
+    validation_phase_event,
 )
 from goldendemo.agent.guardrails import (
     CategoryBrowsingGuardrail,
@@ -113,6 +135,7 @@ from goldendemo.agent.tools import (
     SearchProductsTool,
     SubmitPlanTool,
 )
+from goldendemo.agent.validator import ValidationSubagent
 from goldendemo.clients.weaviate_client import WeaviateClient
 from goldendemo.config import settings
 from goldendemo.data.models import AgentResult
@@ -162,6 +185,13 @@ class GoldenSetAgent:
             reasoning_effort=settings.judge_reasoning_effort,
         )
 
+        # Initialize validation subagent (shares OpenAI client)
+        self.validation_subagent = ValidationSubagent(
+            openai_client=self.openai_client,
+            model=settings.validate_model,
+            reasoning_effort=settings.validate_reasoning_effort,
+        )
+
         # Initialize guardrails FIRST (shared by agent and FinishJudgmentsTool)
         self.guardrails = self._init_guardrails()
 
@@ -193,7 +223,7 @@ class GoldenSetAgent:
     def _init_tools(self) -> dict[str, BaseTool]:
         """Initialize agent tools.
 
-        Note: self.guardrails must be initialized before calling this method.
+        Note: self.guardrails and self.validation_subagent must be initialized before calling this method.
         """
         return {
             TOOL_SEARCH_PRODUCTS: SearchProductsTool(self.weaviate_client),
@@ -204,6 +234,7 @@ class GoldenSetAgent:
             TOOL_FINISH_JUDGMENTS: FinishJudgmentsTool(
                 self.weaviate_client,
                 guardrails=self.guardrails,
+                validator=self.validation_subagent,
             ),
         }
 
@@ -214,7 +245,10 @@ class GoldenSetAgent:
                 max_iterations=self.max_iterations,
             ),
             "minimum_exploration": MinimumExplorationGuardrail(),
-            "score_distribution": ScoreDistributionGuardrail(),
+            "score_distribution": ScoreDistributionGuardrail(
+                min_exact=settings.min_exact_judgments,
+                min_total=settings.min_total_judgments,
+            ),
             "category_browsing": CategoryBrowsingGuardrail(),
         }
 
@@ -435,11 +469,36 @@ class GoldenSetAgent:
         for tool_result in result.tool_results:
             tool_name = tool_result.tool_name
 
-            # Check if finish_judgments completed successfully
-            if tool_name == TOOL_FINISH_JUDGMENTS and tool_result.success:
+            # Handle finish_judgments - emit validation event even on failure
+            if tool_name == TOOL_FINISH_JUDGMENTS:
+                validation_result = None
+                if hasattr(tool_result.result, "data") and tool_result.result.data:
+                    validation_result = tool_result.result.data.get("validation_result")
+
+                # Emit validation phase event if validation ran (regardless of success/failure)
+                if validation_result and validation_result.get("total_reviewed", 0) > 0:
+                    yield validation_phase_event(
+                        total_reviewed=validation_result.get("total_reviewed", 0),
+                        total_removed=validation_result.get("total_removed", 0),
+                        exact_removed=validation_result.get("exact_removed", 0),
+                        partial_removed=validation_result.get("partial_removed", 0),
+                        exact_remaining=validation_result.get("exact_remaining", 0),
+                        partial_remaining=validation_result.get("partial_remaining", 0),
+                        removal_details=validation_result.get("removal_details", []),
+                        total_adjusted=validation_result.get("total_adjusted", 0),
+                        upgrades=validation_result.get("upgrades", 0),
+                        downgrades=validation_result.get("downgrades", 0),
+                        adjustment_details=validation_result.get("adjustment_details", []),
+                    )
+
+                # Only emit completed event and return if successful
+                if not tool_result.success:
+                    continue
+
                 warnings = []
                 if hasattr(tool_result.result, "data") and tool_result.result.data:
                     warnings = tool_result.result.data.get("warnings", [])
+
                 yield completed_event(
                     status="success" if not warnings else "needs_review",
                     judgments_count=len(state.judgments),

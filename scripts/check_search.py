@@ -80,7 +80,7 @@ def main() -> None:
 
     # Otherwise run sample queries
     sample_queries = [
-        "blue velvet sofa",
+        "leather dining chairs",
         "wooden coffee table",
         "modern dining chairs",
         "outdoor patio furniture",

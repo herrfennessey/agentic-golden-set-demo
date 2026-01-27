@@ -24,6 +24,12 @@ class ComparisonResult:
     only_wands: set[str] = field(default_factory=set)
     only_agent: set[str] = field(default_factory=set)
 
+    # Score-level agreement (for products both found relevant)
+    exact_agreement: set[str] = field(default_factory=set)  # Both said Exact (2)
+    partial_agreement: set[str] = field(default_factory=set)  # Both said Partial (1)
+    agent_upgraded: set[str] = field(default_factory=set)  # Agent=Exact, WANDS=Partial
+    agent_downgraded: set[str] = field(default_factory=set)  # Agent=Partial, WANDS=Exact
+
     # Full judgment maps for detail view
     wands_judgments: dict[str, int] = field(default_factory=dict)
     agent_judgments: dict[str, int] = field(default_factory=dict)
@@ -41,6 +47,14 @@ class ComparisonResult:
         if not self.agent_relevant:
             return 0.0
         return len(self.both_relevant) / len(self.agent_relevant)
+
+    @property
+    def score_agreement_rate(self) -> float:
+        """What % of overlapping products have exact score match."""
+        if not self.both_relevant:
+            return 0.0
+        exact_matches = len(self.exact_agreement) + len(self.partial_agreement)
+        return exact_matches / len(self.both_relevant)
 
 
 def load_golden_set(filepath: Path) -> GoldenSetConfig:
@@ -93,6 +107,25 @@ def compare(golden_set: GoldenSetConfig, loader: WANDSLoader) -> ComparisonResul
     only_wands = wands_relevant - agent_relevant
     only_agent = agent_relevant - wands_relevant
 
+    # Compute score-level agreement for overlapping products
+    exact_agreement: set[str] = set()
+    partial_agreement: set[str] = set()
+    agent_upgraded: set[str] = set()
+    agent_downgraded: set[str] = set()
+
+    for pid in both_relevant:
+        wands_score = wands_scores.get(pid, 0)
+        agent_score = agent_scores.get(pid, 0)
+
+        if wands_score == 2 and agent_score == 2:
+            exact_agreement.add(pid)
+        elif wands_score == 1 and agent_score == 1:
+            partial_agreement.add(pid)
+        elif wands_score == 1 and agent_score == 2:
+            agent_upgraded.add(pid)  # Agent more generous
+        elif wands_score == 2 and agent_score == 1:
+            agent_downgraded.add(pid)  # Agent less generous
+
     return ComparisonResult(
         query=golden_set.query,
         query_id=query_id,
@@ -101,6 +134,10 @@ def compare(golden_set: GoldenSetConfig, loader: WANDSLoader) -> ComparisonResul
         both_relevant=both_relevant,
         only_wands=only_wands,
         only_agent=only_agent,
+        exact_agreement=exact_agreement,
+        partial_agreement=partial_agreement,
+        agent_upgraded=agent_upgraded,
+        agent_downgraded=agent_downgraded,
         wands_judgments=wands_scores,
         agent_judgments=agent_scores,
     )

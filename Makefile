@@ -72,4 +72,4 @@ setup: install download-wands
 	@echo "Setup complete! Next steps:"
 	@echo "  1. make weaviate-up    # Start Weaviate (Docker)"
 	@echo "  2. make load-data      # Load products (~\$$0.50 for embeddings)"
-	@echo "  3. make run-agent QUERY='blue velvet sofa'"
+	@echo "  3. make run-agent QUERY='leather dining chairs'"

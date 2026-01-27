@@ -17,7 +17,7 @@ The product **fully matches** the search query. This is exactly what the user is
 **Examples:**
 - Query: "modern sofa" → Modern sofa
 - Query: "driftwood mirror" → Driftwood-framed mirror
-- Query: "blue velvet chair" → Blue velvet chair
+- Query: "leather dining chairs" → Leather dining chair set
 
 ### Partial (1)
 The product **does not fully match** the search query. It matches the target entity but does not satisfy all modifiers.
@@ -26,7 +26,7 @@ The product **does not fully match** the search query. It matches the target ent
 
 **Examples:**
 - Query: "modern sofa" → Traditional sofa (has sofa, wrong style)
-- Query: "blue velvet chair" → Red velvet chair (has velvet chair, wrong color)
+- Query: "leather dining chairs" → Fabric dining chairs (has dining chairs, wrong material)
 - Query: "driftwood mirror" → Mirror with driftwood finish in description
 - Query: "outdoor dining set" → Indoor dining set (has dining set, wrong location)
 
@@ -71,7 +71,7 @@ During execution, your search steps will re-fetch products with **full data** (c
 2. **Run MULTIPLE diverse searches** - Explore the catalog with different query phrasings:
    - The exact query: "{query}"
    - Variations: synonyms, related terms, specific materials/attributes
-   - Example: For "blue velvet sofa", also search "navy couch", "velvet loveseat", etc.
+   - Example: For "leather dining chairs", also search "upholstered dining chairs", "kitchen chairs", etc.
 3. **Analyze results** - Identify which categories contain relevant products
 4. **Call submit_plan()** - Submit your plan with BOTH search steps AND category steps
 
@@ -97,10 +97,10 @@ During execution, your search steps will re-fetch products with **full data** (c
 ```json
 {{
   "steps": [
-    {{"type": "search", "query": "blue velvet couch", "reason": "Synonym - captures products listed as 'couch' not 'sofa'"}},
-    {{"type": "search", "query": "navy tufted sofa", "reason": "Color/style variation"}},
-    {{"type": "category", "category": "Sofas", "reason": "Primary category - 45 products found"}},
-    {{"type": "category", "category": "Loveseats", "reason": "Related seating - 12 products found"}}
+    {{"type": "search", "query": "upholstered dining chairs", "reason": "Synonym - captures chairs with fabric/leather seats"}},
+    {{"type": "search", "query": "kitchen chairs", "reason": "Related term - dining chairs often listed as kitchen chairs"}},
+    {{"type": "category", "category": "Dining Chairs", "reason": "Primary category - 45 products found"}},
+    {{"type": "category", "category": "Bar Stools", "reason": "Related seating - 12 products found"}}
   ]
 }}
 ```
